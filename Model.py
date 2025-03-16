@@ -8,6 +8,8 @@ from Utils import *
 from ModelUtils import *
 import pdb
 
+from PromptIR.Model_AMIR import ProxNet_Prompt
+from codebook.model.network import Network
 
 def setup_seeds(seed):
     torch.manual_seed(seed)
@@ -22,13 +24,11 @@ setup_seeds(1)
 
 
 class DURE(nn.Module): ## without alpha, with two thr
-    def __init__(self, Ch = 4, stages = 4, nc = 32):
+    def __init__(self, Ch = 8, stages = 4, nc = 32):
         super(DURE, self).__init__()
         self.s  = stages
         self.upMode = 'bilinear'
-        #self.mu = params[0]
         self.nc = nc
-        self.DNet = UNet(Ch, self.nc)        
         sobel_x = (torch.FloatTensor([[-1.0,0,-1.0],[-2.0,0,2.0],[-1.0,0,-1.0]])).cuda()
         sobel_x = sobel_x.unsqueeze(dim=0).unsqueeze(dim=0)
         sobel_y = (torch.FloatTensor([[-1.0,-2.0,-1.0],[0,0,0],[1.0,2.0,1.0]])).cuda()
@@ -49,76 +49,106 @@ class DURE(nn.Module): ## without alpha, with two thr
 
 
         ## The modules for learning the measurement matrix G and G^T
-        self.GT = nn.Sequential(nn.Conv2d(1, self.nc, kernel_size=3, stride=1, padding=1),
+        self.HT = nn.Sequential(nn.ConvTranspose2d(1, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
                                 nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, Ch, kernel_size=3, stride=1, padding=1))
-        self.G  = nn.Sequential(nn.Conv2d(Ch, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.ConvTranspose2d(self.nc, Ch, kernel_size=3, stride=1, padding=1))
+        self.H  = nn.Sequential(nn.Conv2d(Ch, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
                                 nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
                                 nn.Conv2d(self.nc, 1, kernel_size=3, stride=1, padding=1))    
+        
+        self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[1,1,1,2])
+        self.proxNetCodeBook = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1])
 
-        self.H_step = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
-        self.U_step = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
-        self.V_step = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
-        self.mu = Parameter(torch.ones(1), requires_grad=True)
-        #self.alpha = Parameter(torch.ones(1), requires_grad=True)
-        self.soft_thr1 = Parameter(0.01*torch.ones(1), requires_grad=True)   
-        self.soft_thr2 = Parameter(0.01*torch.ones(1), requires_grad=True)   
+        checkpoint_path = "/data/cjj/projects/codebookCode/Checkpoint/test_Stage2_Iter12:6_Length1024:256/models/epoch_632_step_27840_2s_G.pth"
+        checkpoint = torch.load(checkpoint_path)
+        self.proxNetCodeBook.load_state_dict(checkpoint, strict=False)
+
+        self.alpha = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
+        self.alpha_F = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
+        self.alpha_K = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
         self._initialize_weights()
-        torch.nn.init.normal_(self.H_step, mean=0.1, std=0.01)
-        torch.nn.init.normal_(self.U_step, mean=0.1, std=0.01)
-        torch.nn.init.normal_(self.V_step, mean=0.1, std=0.01)
+        torch.nn.init.normal_(self.alpha, mean=0.1, std=0.01)
+        torch.nn.init.normal_(self.alpha_F, mean=0.1, std=0.01)
+        torch.nn.init.normal_(self.alpha_K, mean=0.1, std=0.01)
+
+        self.freeze_params(self.proxNetCodeBook.decoder_conv1)
+        self.freeze_params(self.proxNetCodeBook.decoder_conv2)
+        self.freeze_params(self.proxNetCodeBook.decoder_conv3)
+        self.freeze_params(self.proxNetCodeBook.decoder_64)
+        self.freeze_params(self.proxNetCodeBook.decoder_128)
+        self.freeze_params(self.proxNetCodeBook.decoder_256)
+        self.freeze_params(self.proxNetCodeBook.conv_out)
+        self.freeze_params(self.proxNetCodeBook.vq_64)
+        self.freeze_params(self.proxNetCodeBook.up2)
+        self.freeze_params(self.proxNetCodeBook.up3)
+
+    def freeze_params(self,module):
+        """冻结模块的所有参数"""
+        for param in module.parameters():
+            param.requires_grad = False
 
 
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_normal_(m.weight.data)
-                nn.init.constant_(m.bias.data, 0.0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)
             elif isinstance(m, nn.ConvTranspose2d):
                 nn.init.xavier_normal_(m.weight.data)
-                nn.init.constant_(m.bias.data, 0.0)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)
             elif isinstance(m, nn.Linear):
                 nn.init.xavier_normal_(m.weight.data)
-                nn.init.constant_(m.bias.data, 0.0)  
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)  
 
-    def forward(self, M,P):   
-        [P_x,P_y] = self.sobel(P)  
-        Ht = F.interpolate(M , scale_factor = 4, mode = self.upMode)
-        U = torch.zeros(P.shape).cuda()
-        V = torch.zeros(P.shape).cuda()
-        B1x = torch.zeros(P.shape).cuda()
-        B1y = torch.zeros(P.shape).cuda()
-        B2x = torch.zeros(P.shape).cuda()
-        B2y = torch.zeros(P.shape).cuda()
+    def forward(self, M, P, one_hot):   
+        B,C,H,W = M.shape
+        if C == 4:
+            M = M.repeat_interleave(2, dim=1)
+        Ft = F.interpolate(M , scale_factor = 4, mode = self.upMode)
+        B,_,H,W = Ft.shape
+        K = torch.zeros(Ft.shape).cuda()
          
         for i in range(0, self.s):           
 
-            ## U subproblem  
-            [U_x,U_y] = self.sobel(U)  
-            Grad_U = P_x*(P_x*U+P_y*V+P-self.G(Ht))+self.mu*self.Tsobel([U_x-B1x,U_y-B1y])
-            U = U - self.U_step[i]  * Grad_U
-            [U_x,U_y] = self.sobel(U) 
-            B1x = torch.mul(torch.sign(U_x), F.relu(torch.abs(U_x) - self.soft_thr1)) 
-            B1y = torch.mul(torch.sign(U_y), F.relu(torch.abs(U_y) - self.soft_thr1))             
-         
-            ## V subproblem 
-            [V_x,V_y] = self.sobel(V)   
-            Grad_V = P_y*(P_x*U+P_y*V+P-self.G(Ht))+self.mu*self.Tsobel([V_x-B2x,V_y-B2y])
-            V = V - self.V_step[i]  * Grad_V          
-            [V_x,V_y] = self.sobel(V) 
-            B2x = torch.mul(torch.sign(V_x), F.relu(torch.abs(V_x) - self.soft_thr2)) 
-            B2y = torch.mul(torch.sign(V_y), F.relu(torch.abs(V_y) - self.soft_thr2)) 
+            ## F subproblem  
+            Grad_F = self.DT(self.D(Ft) - M) + self.HT(self.H(Ft) - P) + self.alpha[i] * (Ft - K)
+            F_middle = Ft - self.alpha_F[i] * Grad_F
+            Ft = self.proxNet(F_middle) 
 
-            ## Reconstructing HRMS                         
-            Grad_H = self.GT(self.G(Ht)-P-(P_x*U+P_y*V))+self.DT(self.D(Ht)-M)         
-            Ht = Ht - self.H_step[i]  * Grad_H
-            Ht = Ht+self.DNet(Ht)
-            
-        ## consistency loss
-        M_dual = self.D(Ht)
-        P_dual = self.G(Ht)-P_x*U-P_y*V
-        return Ht,M_dual,P_dual
+            ## K subproblem
+            Grad_K = self.alpha[i] * (K - Ft)
+            K_middle = K - self.alpha_K[i] * Grad_K
+            K,codebook_loss, _, _, _ = self.proxNetCodeBook(K_middle, one_hot)
+
+        if C == 4:
+            Ft = Ft.float().view(B, C, 2, H , W ).mean(dim=2)
+
+        return Ft
+    
+def get_one_hot(label, num_classes):
+    one_hot = torch.zeros(num_classes)
+    one_hot[label] = 1
+    return one_hot
+    
+if __name__ == '__main__':
+
+    model = DURE(8, 4, 32)
+
+    input = torch.rand(4, 8 ,64,64)
+    P = torch.rand(4, 1 , 256, 256)
+    one_hot = get_one_hot(1, 4)
+    one_hot = one_hot.unsqueeze(0)
+
+    output = model(input, P, one_hot)
+
+    print(output.shape)
+
+
+    print(sum(p.numel() for p in model.parameters() )/1e6, "M") 
