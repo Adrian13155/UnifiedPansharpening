@@ -197,11 +197,11 @@ class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
         if self.mlp_codebook:
             self.codebook = nn.ModuleList([nn.Linear(e_dim, e_dim) for i in range(3)])
 
-        self.depth4shared = 12
-        self.depth4taskd = 6
+        self.depth4shared = 6
+        self.depth4taskd = 3
 
-        self.n_shared = 1024
-        self.n_tasks = 256
+        self.n_shared = 512
+        self.n_tasks = 128
 
         # 共享的/公有的codebook
         self.shared_codebook = nn.Embedding(self.n_shared , e_dim)
@@ -264,22 +264,6 @@ class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
                 z_q_task[i:i+1] += delta_task  # 累加 delta_task
 
 
-
-        # 计算每个任务特定码本的完整分布
-        # task_distributions = [F.softmax(codebook.weight, dim=0) for codebook in self.task_codebooks]
-
-        # 确保分布是归一化的并避免 log(0)
-        # epsilon = 1e-6
-        # task_distributions = [dist + epsilon for dist in task_distributions]
-
-        # Calculate KL divergence between each pair of task-specific codebook means
-        # kl_loss = 0
-        # for i in range(len(task_distributions)):
-        #     for j in range(i + 1, len(task_distributions)):
-        #         kl_ij = F.kl_div((task_distributions[i] + epsilon).log(), task_distributions[j] + epsilon, reduction='batchmean')
-        #         kl_ji = F.kl_div((task_distributions[j] + epsilon).log(), task_distributions[i] + epsilon, reduction='batchmean')
-        #         kl_loss += kl_ij + kl_ji
-
         # Combine shared and task-specific quantized outputs
         z_q = z_q_shared  + z_q_task
 
@@ -290,20 +274,9 @@ class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
         q_latent_loss = torch.mean((z_q - z.detach()) ** 2)
         codebook_loss = q_latent_loss + e_latent_loss * self.beta
 
-        # 动态调整 kl_loss 的权重
-        # if codebook_loss.item() > 0 and kl_loss.item() > 0:
-        #     codebook_loss_magnitude = torch.floor(torch.log10(codebook_loss)).item()
-        #     kl_loss_magnitude = torch.floor(torch.log10(kl_loss)).item()
-        #     target_kl_loss_magnitude = codebook_loss_magnitude - 1
-        #     kl_loss_weight = 10 ** (target_kl_loss_magnitude - kl_loss_magnitude)
-        # else:
-        # kl_loss_weight = 0.0001  # 默认值，防止出现 log(0) 的情况
-
         z_q = z + (z_q - z).detach()
 
-        # kl_loss = kl_loss * kl_loss_weight
         return z_q, codebook_loss, None
-        # return z_q, codebook_loss, kl_loss, None
 class DualCodebookVectorQuantizer(ResidualVectorQuantizer):
     """
     公有码本和私有码本的想法，在余弦相似度上做损失来约束公有码本和私有码本

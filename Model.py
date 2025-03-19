@@ -63,7 +63,7 @@ class DURE(nn.Module): ## without alpha, with two thr
         self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[1,1,1,2])
         self.proxNetCodeBook = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1])
 
-        checkpoint_path = "/data/cjj/projects/codebookCode/Checkpoint/test_Stage2_Iter12:6_Length1024:256/models/epoch_632_step_27840_2s_G.pth"
+        checkpoint_path = "/data/cjj/projects/codebookCode/experiments/Stage2_LowParam_512:128_Iter6:3/models/epoch_143_step_6320_2s_G.pth"
         checkpoint = torch.load(checkpoint_path)
         self.proxNetCodeBook.load_state_dict(checkpoint, strict=False)
 
@@ -75,25 +75,11 @@ class DURE(nn.Module): ## without alpha, with two thr
         torch.nn.init.normal_(self.alpha_F, mean=0.1, std=0.01)
         torch.nn.init.normal_(self.alpha_K, mean=0.1, std=0.01)
 
-        self.freeze_params(self.proxNetCodeBook.decoder_conv1)
-        self.freeze_params(self.proxNetCodeBook.decoder_conv2)
-        self.freeze_params(self.proxNetCodeBook.decoder_conv3)
-        self.freeze_params(self.proxNetCodeBook.decoder_64)
-        self.freeze_params(self.proxNetCodeBook.decoder_128)
-        self.freeze_params(self.proxNetCodeBook.decoder_256)
-        self.freeze_params(self.proxNetCodeBook.conv_out)
-        self.freeze_params(self.proxNetCodeBook.vq_64)
-        self.freeze_params(self.proxNetCodeBook.up2)
-        self.freeze_params(self.proxNetCodeBook.up3)
-
-    def freeze_params(self,module):
-        """冻结模块的所有参数"""
-        for param in module.parameters():
-            param.requires_grad = False
-
 
     def _initialize_weights(self):
         for m in self.modules():
+            if m in self.proxNetCodeBook.modules():
+                continue
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_normal_(m.weight.data)
                 if m.bias is not None:
@@ -113,18 +99,20 @@ class DURE(nn.Module): ## without alpha, with two thr
             M = M.repeat_interleave(2, dim=1)
         Ft = F.interpolate(M , scale_factor = 4, mode = self.upMode)
         B,_,H,W = Ft.shape
-        K = torch.zeros(Ft.shape).cuda()
+        K = Ft.clone()
          
         for i in range(0, self.s):           
 
             ## F subproblem  
             Grad_F = self.DT(self.D(Ft) - M) + self.HT(self.H(Ft) - P) + self.alpha[i] * (Ft - K)
             F_middle = Ft - self.alpha_F[i] * Grad_F
+            # Ft,codebook_loss, _, _, _ = self.proxNetCodeBook(F_middle, one_hot)
             Ft = self.proxNet(F_middle) 
 
             ## K subproblem
             Grad_K = self.alpha[i] * (K - Ft)
             K_middle = K - self.alpha_K[i] * Grad_K
+            # K = self.proxNet(K_middle) 
             K,codebook_loss, _, _, _ = self.proxNetCodeBook(K_middle, one_hot)
 
         if C == 4:
@@ -138,17 +126,20 @@ def get_one_hot(label, num_classes):
     return one_hot
     
 if __name__ == '__main__':
+    # model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
+    # for name, module in model.named_modules():
+    #     print("name:", name, "module", module)
+    # torch.cuda.set_device(6)
+    model = DURE(8, 4, 32).cuda()
 
-    model = DURE(8, 4, 32)
+    # input = torch.rand(4, 8 ,64,64).cuda()
+    # P = torch.rand(4, 1 , 256, 256).cuda()
+    # one_hot = get_one_hot(1, 4)
+    # one_hot = one_hot.unsqueeze(0)
 
-    input = torch.rand(4, 8 ,64,64)
-    P = torch.rand(4, 1 , 256, 256)
-    one_hot = get_one_hot(1, 4)
-    one_hot = one_hot.unsqueeze(0)
+    # output = model(input, P, one_hot)
 
-    output = model(input, P, one_hot)
-
-    print(output.shape)
+    # print(output.shape)
 
 
     print(sum(p.numel() for p in model.parameters() )/1e6, "M") 

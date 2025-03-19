@@ -46,7 +46,7 @@ def main(opt):
 
     # 格式化为字符串，包含月、日、小时和分钟
     formatted_time = now.strftime("%m-%d_%H:%M")
-    save_dir = os.path.join(opt.save_dir, formatted_time)
+    save_dir = os.path.join(opt.save_dir, f'{formatted_time}_{opt.exp_name}')
     os.makedirs(save_dir,exist_ok=True)
     lr = opt.learning_rate
 
@@ -91,7 +91,7 @@ def main(opt):
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
     L1 = nn.L1Loss().cuda() 
 
-    logger = get_logger(os.path.join(save_dir,'run.log'))
+    logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
     logger.info(opt)
 
     for epoch in range(0,num_epoch):
@@ -168,12 +168,14 @@ def main(opt):
                 print(
                     'Epoch:[{}]\t PSNR_GF = {:.4f}\t  PSNR_QB = {:.4f}\t PSNR_WV2 = {:.4f}\t PSNR_WV4 = {:.4f}\t BEST_GF_PSNR = {:.4f}\t BEST_epoch = {}'.format(
                         epoch, psnr[0], psnr[1], psnr[2], psnr[3], best_psnr_gf, best_index))
+                
+            torch.save(model.state_dict(), os.path.join(save_dir,f'epoch={epoch}.pth'))
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='GridFormer', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='no_gard_form', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
-    parser.add_argument('-batch_size', help='Set the training batch size', default=4, type=int)
+    parser.add_argument('-batch_size', help='Set the training batch size', default=8, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=200, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
@@ -187,7 +189,7 @@ def get_opt():
     args = parser.parse_args()
     
     return args
-            
+
 if __name__ == '__main__':
     opt = get_opt()
     torch.cuda.set_device(opt.gpu_id)

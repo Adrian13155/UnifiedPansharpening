@@ -9,9 +9,9 @@ from codebook.model.feature_converter import TransformerBlock
 from codebook.model.vgg import Vgg19
 
 channel_query_dict = {
-    64: 256,
-    128: 128,
-    256: 64,
+    32: 128,
+    64: 64,
+    128: 32,
 }
 
 
@@ -478,20 +478,22 @@ class Network(nn.Module):
         if C == 4:
             x = x.repeat_interleave(2, dim=1)
         f1, f2, f3 = self.encode(x)
-        vq_output = self.vq_64(f3, one_hot)
-        # 根据返回值的数量来决定如何解包
-        
-        if len(vq_output) == 3:
-            fq, codebook_loss, distance_map = vq_output
-            kl_loss = None
-        elif len(vq_output) == 4:
-            fq, codebook_loss, kl_loss, distance_map = vq_output
 
-        f1_d, fq, f2_d, f3_d = self.decode(fq)
-        x_rec = self.conv_out(f1_d)
+        with torch.no_grad():
+            vq_output = self.vq_64(f3, one_hot)
+            # 根据返回值的数量来决定如何解包
+            
+            if len(vq_output) == 3:
+                fq, codebook_loss, distance_map = vq_output
+                kl_loss = None
+            elif len(vq_output) == 4:
+                fq, codebook_loss, kl_loss, distance_map = vq_output
 
-        if C == 4:
-            x_rec = x_rec.float().view(B, C, 2, H , W ).mean(dim=2)
+            f1_d, fq, f2_d, f3_d = self.decode(fq)
+            x_rec = self.conv_out(f1_d)
+
+            if C == 4:
+                x_rec = x_rec.float().view(B, C, 2, H , W ).mean(dim=2)
 
         if kl_loss is None:
             return x_rec, codebook_loss, distance_map, [f1, f2, f3], [fq, f2_d, f3_d]
