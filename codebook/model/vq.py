@@ -180,6 +180,73 @@ class ResidualVectorQuantizer(VectorQuantizer):
         z_q = torch.sum(self.embedding(gt_indices), dim=1, keepdim=False)
         z_q = z_q.view(b, h, w, -1).permute(0, 3, 1, 2).contiguous()
         return z_q
+    
+class SharedAndTaskSpecificCodebookVectorQuantizer3D(ResidualVectorQuantizer):
+    """
+    设计是这样的,输入的one_hot编码会决定会选取self.task_codebooks中的哪一个.
+    然后输入特征的形状是[batch, 64, 4, 32, 32],会将特征展平为[batch, 64, 4, 1024]
+    然后就会遍历shared_codebook和选定的task_codebook,形状分别是[1,1024]和[1,4],将这两个向量相乘可以得到矩阵[4,1024]
+    然后我们可以将展平后的特征与这个矩阵计算距离,距离最少的这个就是对应的匹配的特征.
+    由于会有多次迭代,所以会有多次匹配.
+    同时由于一个batch里面one_hot编码是不相同的,所以需要遍历batch来做.
+
+    匹配过后需要计算量化损失,返回codebook_loss,同时返回量化后的特征
+    """
+    def __init__(self, n_e_task, n_e_shared, e_dim_shared, e_dim_task, depth, num_tasks = 4):
+        super().__init__(1, 1, 0.25, False, 1)
+        self.n_e_task = n_e_task
+        self.n_e_shared = n_e_shared
+        self.e_dim_shared = e_dim_shared
+        self.e_dim_task = e_dim_task
+
+        self.depth = depth  # 匹配次数
+        self.shared_codebook = nn.Embedding(self.n_e_shared , self.e_dim_shared)
+        self.shared_codebook.weight.data.uniform_(-1.0 / self.n_e_shared , 1.0 / self.n_e_shared)
+        self.task_codebooks = nn.ModuleList([nn.Embedding(self.n_e_task, self.e_dim_task) for _ in range(num_tasks)])
+        for codebook in self.task_codebooks:
+            codebook.weight.data.uniform_(-1.0 / self.n_e_task, 1.0 / self.n_e_task)
+
+        
+
+    def forward(self,x,one_hot):
+        b, c, d, h, w = x.shape # [batch, 64, 4, 32, 32]
+        x_flattened = x.view(b, c, d, -1) # # [batch, 64, 4,1024]
+
+        task_indices  = torch.argmax(one_hot, dim=1)
+        residual = x_flattened
+
+        z_q = torch.zeros_like(residual)
+        codebook_loss = 0
+        idx = 0 
+        for i in range(b):  # 遍历 batch
+            task_idx = task_indices[i].item()
+            task_codebook = self.task_codebooks[task_idx].weight  # [n_e_task, e_dim_task]
+            
+            for _ in range(self.depth):
+                shared_codebook = self.shared_codebook.weight  # [n_e_shared, e_dim_shared]
+                
+                for c in range(1):  # 遍历 64 个通道
+                    best_distance = None
+                    best_quantized = None
+
+                    # 遍历所有 task_codebook 和 shared_codebook
+                    for task_vector in task_codebook:
+                        for shared_vector in shared_codebook:
+                            match_matrix = torch.matmul(task_vector.view(self.e_dim_task, 1), shared_vector.view(1, self.e_dim_shared))  # [e_dim_task, e_dim_shared]
+                            distance = torch.norm(residual[i][c] - match_matrix)  # 计算距离
+                            idx += 1
+                            print("idx = ", idx )
+                            if best_distance is None or distance < best_distance:
+                                    best_distance = distance
+                                    best_quantized = match_matrix
+
+                    residual[i][c] -= best_quantized  # 更新残差
+                    z_q[i][c] += best_quantized  # 累加量化向量
+
+                    # 计算量化损失
+                    codebook_loss += F.mse_loss(residual[i, c], best_quantized.detach())
+        
+        return z_q, codebook_loss / b
 
 class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
     """
@@ -233,13 +300,18 @@ class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
         return z_q.view(shape_z)
 
     def forward(self, z, one_hot, gt_indices=None, current_iter=None):
+        print(self.z_length)
         assert self.z_length == z.size(1)
-        z_flattened = self.unfold(z).permute(0, 2, 1)
-        z_flattened = z_flattened.reshape(-1, self.e_dim)
+        print("z.shape", z.shape)
+        z_flattened = self.unfold(z).permute(0, 2, 1) # [2, 961, 1024]
+        print("z_flattened.shape1", z_flattened.shape)
+        z_flattened = z_flattened.reshape(-1, self.e_dim) # [1922, 1024]
+        print("z_flattened.shape2", z_flattened.shape)
 
         # Shared codebook matching
         z_q_shared = 0
         residual = z_flattened
+        print(self.shared_codebook.weight.shape)
         for _ in range(self.depth4shared):
             d_shared = self.dist(residual, self.shared_codebook.weight)
             min_encoding_indices_shared = torch.argmin(d_shared, dim=1)
@@ -255,9 +327,10 @@ class SharedAndTaskSpecificCodebookVectorQuantizer(ResidualVectorQuantizer):
         for i in range(one_hot.size(0)):  # Iterate over batch
             task_codebook = self.task_codebookss[task_index[i]]
             residual_task = residual[i:i+1]  # Initialize residual_task for each sample
-
+            print(residual_task.shape)
             for _ in range(self.depth4taskd):
                 d_task = self.dist(residual_task, task_codebook.weight)
+                print("d_task: ",d_task.shape)
                 min_encoding_indices_task = torch.argmin(d_task, dim=1)
                 delta_task = task_codebook(min_encoding_indices_task)
                 residual_task -= delta_task  # 更新残差
@@ -382,7 +455,6 @@ class DualCodebookVectorQuantizer(ResidualVectorQuantizer):
         z_q = fold(z_t)
         z_q = z_q / count_t
         return z_q.view(shape_z)
-
 class BlockBasedResidualVectorQuantizer(ResidualVectorQuantizer):
     def __init__(self, n_e, e_dim, beta=0.25, LQ_stage=False, depth=6, unfold_size=2, mlp_codebook=False):
         super().__init__(n_e, e_dim, beta, LQ_stage, depth)
@@ -465,3 +537,28 @@ class BlockBasedResidualVectorQuantizer(ResidualVectorQuantizer):
     #     z_q = z_q / count_t
     #     return z_q.view(shape_z)
 
+if __name__ == "__main__":
+    model = SharedAndTaskSpecificCodebookVectorQuantizer(n_e=1,e_dim=1024,depth=3, unfold_size=2, mlp_codebook=False, num_tasks=4).cuda()
+    x = torch.rand(2, 256, 32, 32).cuda()
+    # one_hot 编码，假设每个样本属于不同的任务
+    one_hot = torch.tensor([
+        [1, 0, 0, 0],  # 第一个样本属于任务 0
+        [0, 1, 0, 0]   # 第二个样本属于任务 1
+    ], dtype=torch.float32)  # [batch, num_tasks]
+
+
+
+    # model = SharedAndTaskSpecificCodebookVectorQuantizer3D(n_e_task=512, n_e_shared=128, e_dim_shared=1024, e_dim_task=4, depth=3, num_tasks=4).cuda()
+
+    # # 输入特征
+    # x = torch.randn(2, 64, 4, 32, 32).cuda()  # [batch, 64, 4, 32, 32]
+
+    # # one_hot 编码，假设每个样本属于不同的任务
+    # one_hot = torch.tensor([
+    #     [1, 0, 0, 0],  # 第一个样本属于任务 0
+    #     [0, 1, 0, 0]   # 第二个样本属于任务 1
+    # ], dtype=torch.float32)  # [batch, num_tasks]
+
+    # # 前向传播
+    z_q, loss,_ = model(x, one_hot)
+    print(z_q.shape)
