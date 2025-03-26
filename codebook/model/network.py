@@ -9,9 +9,9 @@ from codebook.model.feature_converter import TransformerBlock
 from codebook.model.vgg import Vgg19
 
 channel_query_dict = {
-    32: 128,
-    64: 64,
-    128: 32,
+    16: 64,
+    32: 32,
+    64: 16,
 }
 
 
@@ -504,17 +504,16 @@ def get_one_hot(label, num_classes):
     one_hot = torch.zeros(num_classes)
     one_hot[label] = 1
     return one_hot
-        
 if __name__ == "__main__":
-    checkpoint_path = "/data/cjj/projects/codebookCode/Checkpoint/test_Stage2_Iter12:6_Length1024:256/models/epoch_632_step_27840_2s_G.pth"
-    checkpoint = torch.load(checkpoint_path)
+    # checkpoint_path = "/data/cjj/projects/codebookCode/Checkpoint/test_Stage2_Iter12:6_Length1024:256/models/epoch_632_step_27840_2s_G.pth"
+    # checkpoint = torch.load(checkpoint_path)
 
     model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
-    model.load_state_dict(checkpoint, strict=False)
+    # model.load_state_dict(checkpoint, strict=False)
 
-    t = torch.rand(1,8,64,64).cuda()
+    t = torch.rand(1,8,256,256).cuda()
     one_hot = get_one_hot(1, 4)
     one_hot = one_hot.unsqueeze(0)
     output = model(t, one_hot)
 
-    print(sum(p.numel() for p in model.parameters() )/1e6, "M")
+    # print(sum(p.numel() for p in model.parameters() )/1e6, "M")

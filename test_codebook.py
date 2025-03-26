@@ -81,9 +81,9 @@ def main(opt):
 
     model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
 
-    checkpoint_path = "/data/cjj/projects/codebookCode/experiments/Stage2_LowParam_512:128_Iter6:3/models/epoch_143_step_6320_2s_G.pth"
-    checkpoint = torch.load(checkpoint_path)
-    model.load_state_dict(checkpoint, strict=False)
+    # checkpoint_path = "/data/cjj/projects/codebookCode/experiments/Stage2_LowParam_512:128_Iter6:3/models/epoch_143_step_6320_2s_G.pth"
+    # checkpoint = torch.load(checkpoint_path)
+    # model.load_state_dict(checkpoint, strict=False)
 
     logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
     logger.info(opt)
@@ -101,6 +101,7 @@ def main(opt):
             for index, datas in enumerate(tqdm(val_dataloader,desc=f"Validating {data_name}")):
                 count += 1
                 inp_ms, inp_pan, inp_gt = datas[0], datas[1], datas[2]
+                print("inp_ms:",inp_ms.shape)
                 inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                 inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                 inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)

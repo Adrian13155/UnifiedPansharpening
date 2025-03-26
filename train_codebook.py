@@ -13,9 +13,11 @@ from tqdm import tqdm
 import random
 import logging 
 import pandas as pd
-from Model import DURE
+# from Model import DURE
+from codebook.model.model3D.network3D import Network3D
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
+from codebook.model.loss import CharbonnierLoss
 # transformData = transformData()
 # io=dataIO()
 from torch.utils.tensorboard import SummaryWriter
@@ -65,7 +67,7 @@ def main(opt):
     wv2_path = os.path.join(dataset_folder,'WV2/train')
     wv4_path = os.path.join(dataset_folder,'WV4/train')
     gf_dataset, qb_dataset, wv2_dataset, wv4_dataset = MatDataset(gf_path), MatDataset(qb_path), MatDataset(wv2_path), MatDataset(wv4_path)
-    dataset_labels = {'GF': 0, 'QB': 1, 'WV2': 2, 'WV4': 3}
+    dataset_labels = {'GF': 0, 'QB': 1, 'WV2': 2, 'WV4': 3} # WV2是4通道的
     train_dataset = CombineMatDataset(datasets=[gf_dataset, qb_dataset, wv2_dataset, wv4_dataset],
                             dataset_labels=[dataset_labels['GF'], dataset_labels['QB'], dataset_labels['WV2'], dataset_labels['WV4']])
 
@@ -85,19 +87,21 @@ def main(opt):
                                 MatDataset(val_wv4_path)
     list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset]
 
-    model = DURE(opt.Ch, opt.Stage, opt.nc).cuda()
+    model = Network3D().cuda()
 
-    if opt.checkpoint_path is not None:
-        checkpoint = torch.load(opt.checkpoint_path)
-        model.load_state_dict(checkpoint)
+    
+
+    # if opt.checkpoint_path is not None:
+    #     checkpoint = torch.load(opt.checkpoint_path)
+    #     model.load_state_dict(checkpoint)
 
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
-    L1 = nn.L1Loss().cuda() 
+    cri_pix = CharbonnierLoss(reduction="mean").cuda()
 
     logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
     logger.info(opt)
-
+    logger.info(f"model params: {sum(p.numel() for p in model.parameters() )/1e6} M")
 
     for epoch in range(opt.epoch_start,num_epoch):
         train_dataset.shuffle()
@@ -111,14 +115,12 @@ def main(opt):
                 optimizer_G.zero_grad() 
                 datas, one_hot = list
                 inp_ms, inp_pan, inp_gt = datas
-                inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
-                inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                 inp_gt = inp_gt.type(torch.FloatTensor).cuda().permute(0,3,1,2) 
+                b,c,h,w = inp_gt.shape
+                restored,codebook_loss,_,_  = model(inp_gt, one_hot)
 
-                restored  = model(inp_ms, inp_pan, one_hot)
-
-                loss_l1 = L1(restored, inp_gt)
-                loss_G = loss_l1 
+                loss_l1 = cri_pix(restored, inp_gt)
+                loss_G = loss_l1 + codebook_loss * c
                 loss_G.backward()
                 optimizer_G.step()
                 torch.cuda.empty_cache() 
@@ -127,7 +129,7 @@ def main(opt):
             pbar.set_description("Epoch:{}   loss_G:{:6}  lr:{:.6f}".format(epoch, loss_G.item(), current_lr))
             pbar.update()
         
-        if epoch % 5== 0:
+        if epoch % 1== 0:
             model.eval() 
             with torch.no_grad():
                 psnr = []
@@ -141,14 +143,12 @@ def main(opt):
                     for index, datas in enumerate(tqdm(val_dataloader,desc=f"Validating {data_name}")):
                         count += 1
                         inp_ms, inp_pan, inp_gt = datas[0], datas[1], datas[2]
-                        inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
-                        inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
-                        inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)
+                        inp_gt = inp_gt.type(torch.FloatTensor).cuda().permute(0,3,1,2)
 
-                        output = model(inp_ms, inp_pan, one_hot)
+                        output,_,_,_ = model(inp_gt, one_hot)
 
                         netOutput_np = output.cpu().numpy()[0]
-                        gtLabel_np = inp_gt.numpy()[0]
+                        gtLabel_np = inp_gt.cpu().numpy()[0]
                         psnrValue = PSNR(gtLabel_np, netOutput_np)
                         sum_psnr += psnrValue                         
                     avg_psnr = sum_psnr / count
@@ -178,19 +178,17 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='no_gard_continue', help='experiment name')
-    parser.add_argument('-learning_rate', help='Set the learning rate', default=0.000046, type=float)
-    parser.add_argument('-batch_size', help='Set the training batch size', default=16, type=int)
-    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=196, type=int)
+    parser.add_argument('--exp_name', type=str, default='3D Codebook', help='experiment name')
+    parser.add_argument('-learning_rate', help='Set the learning rate', default=4e-4, type=float)
+    parser.add_argument('-batch_size', help='Set the training batch size', default=8, type=int)
+    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=400, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='', default=0, type=int)
-    parser.add_argument('-Ch', help='', default=8, type=int)
-    parser.add_argument('-Stage', help='', default=4, type=int)
-    parser.add_argument('-nc', help='', default=32, type=int)
-    parser.add_argument('-total_iteration', help='', default=2e5, type=int)
-    parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-18_23:12_no_gard_form/epoch=195.pth", type=str)
+    parser.add_argument('-gpu_id', help='', default=1, type=int)
+    parser.add_argument('-Stage', help='', default=1, type=int)
+    parser.add_argument('-total_iteration', help='', default=30000, type=int)
+    # parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-18_23:12_no_gard_form/epoch=195.pth", type=str)
     
     args = parser.parse_args()
     
