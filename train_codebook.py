@@ -91,9 +91,9 @@ def main(opt):
 
     
 
-    # if opt.checkpoint_path is not None:
-    #     checkpoint = torch.load(opt.checkpoint_path)
-    #     model.load_state_dict(checkpoint)
+    if opt.checkpoint_path is not None:
+        checkpoint = torch.load(opt.checkpoint_path)
+        model.load_state_dict(checkpoint,strict=False)
 
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
@@ -178,17 +178,17 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='3D Codebook', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='3D Codebook Stage2 Shared ', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=4e-4, type=float)
     parser.add_argument('-batch_size', help='Set the training batch size', default=8, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=400, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='', default=1, type=int)
-    parser.add_argument('-Stage', help='', default=1, type=int)
+    parser.add_argument('-gpu_id', help='', default=5, type=int)
+    parser.add_argument('-Stage', help='', default=2, type=int)
     parser.add_argument('-total_iteration', help='', default=30000, type=int)
-    # parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-18_23:12_no_gard_form/epoch=195.pth", type=str)
+    parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-27_00:02_3D Codebook Stage1 Shared/epoch=45.pth", type=str)
     
     args = parser.parse_args()
     

@@ -3,15 +3,16 @@ sys.path.append("/data/cjj/projects/UnifiedPansharpening")
 from torch import nn
 from codebook.model.model3D.MSAB3D import MSAB3D
 from codebook.model.vq import SharedAndTaskSpecificCodebookVectorQuantizer3D
+from codebook.model.vq3D import BlockBasedResidualVectorQuantizer3D
 import torch
 from torch.nn import functional as F
 from codebook.model.feature_converter import TransformerBlock
 from codebook.model.vgg import Vgg19
 
 channel_query_dict = {
-    32: 128,
-    64: 64,
-    128: 32,
+    16: 64,
+    32: 32,
+    64: 16,
 }
 
 # channel_query_dict = {
@@ -56,9 +57,10 @@ class BasicCrossChannelAttentionBlock(nn.Module):
 
 
 class VQModule(nn.Module):
-    def __init__(self,n_e_shared=512, n_e_task=128, e_dim_shared=1024, e_dim_task=4, depth=3, num_tasks=4):
+    def __init__(self,n_e_shared=1024, n_e_task=256, e_dim_shared=256, depth=6, num_tasks=4):
         super().__init__()
-        self.quantize = SharedAndTaskSpecificCodebookVectorQuantizer3D(n_e_shared=n_e_shared, n_e_task=n_e_task, e_dim_shared=e_dim_shared, e_dim_task=e_dim_task, depth=depth, num_tasks=num_tasks)
+        # self.quantize = SharedAndTaskSpecificCodebookVectorQuantizer3D(n_e_shared=n_e_shared, n_e_task=n_e_task, e_dim_shared=e_dim_shared, e_dim_task=e_dim_task, depth=depth, num_tasks=num_tasks)
+        self.quantize = BlockBasedResidualVectorQuantizer3D(n_shared=1024, n_task = 256, e_dim=256, beta=0.25, LQ_stage=False, depth=6, unfold_size=2, mlp_codebook=False)
 
     def forward(self, x, one_hot):
         return self.quantize(x, one_hot)
@@ -280,7 +282,7 @@ class Network3D(nn.Module):
         # self.encoder_conv4 = nn.Conv3d(channel_query_dict[curr_res], channel_query_dict[curr_res], 3, stride=1, padding=1)
         # self.encoder_32 = BasicBlock3D(channel_query_dict[curr_res], channel_query_dict[curr_res], num_blocks=num_block[3])
 
-        self.vq_64 = VQModule(n_e_shared=512, n_e_task=128, e_dim_shared=feature_channel**2, e_dim_task=4, depth=3, num_tasks=4)
+        self.vq_64 = VQModule()
 
         self.decoder_conv1 = nn.Conv3d(channel_query_dict[curr_res], channel_query_dict[curr_res], 3, stride=1, padding=1)
         self.decoder_64 = BasicBlock3D(channel_query_dict[curr_res], channel_query_dict[curr_res], num_blocks=num_block[2])
