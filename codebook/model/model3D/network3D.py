@@ -364,6 +364,7 @@ if __name__ == "__main__":
     # output_8_channels = model(input_8_channels)
 
     print(output_4_channels.shape)
+    print(str(model))
     # print(output_8_channels.shape)
     # model = Network3D(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
 

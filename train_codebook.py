@@ -89,19 +89,21 @@ def main(opt):
 
     model = Network3D().cuda()
 
+    logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
+    logger.info(opt)
+    logger.info(f"model params: {sum(p.numel() for p in model.parameters() )/1e6} M")
+    logger.info(f"Network Structure: {str(model)}")
+
+    # if opt.checkpoint_path is not None:
+    #     checkpoint = torch.load(opt.checkpoint_path)
+    #     model.load_state_dict(checkpoint,strict=False)
+    #     logger.info(f"Load Checkpoint from {opt.checkpoint_path}")
     
-
-    if opt.checkpoint_path is not None:
-        checkpoint = torch.load(opt.checkpoint_path)
-        model.load_state_dict(checkpoint,strict=False)
-
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
     cri_pix = CharbonnierLoss(reduction="mean").cuda()
 
-    logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
-    logger.info(opt)
-    logger.info(f"model params: {sum(p.numel() for p in model.parameters() )/1e6} M")
+    
 
     for epoch in range(opt.epoch_start,num_epoch):
         train_dataset.shuffle()
@@ -109,6 +111,7 @@ def main(opt):
 
         pbar = tqdm(train_dataloader)
         model.train()
+        total_loss = 0
 
         for index, train_data_lists in enumerate(pbar):
             for list,data_name in zip(train_data_lists, dataset_namelist):
@@ -121,6 +124,7 @@ def main(opt):
 
                 loss_l1 = cri_pix(restored, inp_gt)
                 loss_G = loss_l1 + codebook_loss * c
+                total_loss += loss_G.item()
                 loss_G.backward()
                 optimizer_G.step()
                 torch.cuda.empty_cache() 
@@ -129,6 +133,8 @@ def main(opt):
             pbar.set_description("Epoch:{}   loss_G:{:6}  lr:{:.6f}".format(epoch, loss_G.item(), current_lr))
             pbar.update()
         
+        avg_total_loss = total_loss / len(train_dataloader)
+
         if epoch % 1== 0:
             model.eval() 
             with torch.no_grad():
@@ -178,17 +184,17 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='3D Codebook Stage2 Shared ', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='3D Codebook Shared and Task for one training', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=4e-4, type=float)
     parser.add_argument('-batch_size', help='Set the training batch size', default=8, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=400, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='', default=5, type=int)
+    parser.add_argument('-gpu_id', help='', default=3, type=int)
     parser.add_argument('-Stage', help='', default=2, type=int)
     parser.add_argument('-total_iteration', help='', default=30000, type=int)
-    parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-27_00:02_3D Codebook Stage1 Shared/epoch=45.pth", type=str)
+    # parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-27_00:02_3D Codebook Stage1 Shared/epoch=45.pth", type=str)
     
     args = parser.parse_args()
     
