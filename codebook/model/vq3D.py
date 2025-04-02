@@ -10,7 +10,7 @@ class BlockBasedResidualVectorQuantizer3D_forone(ResidualVectorQuantizer):
     只有一种码本的codebook, 第一阶段的codebook
     """
     def __init__(self, n_shared=1024, n_task = 256, e_dim=256, beta=0.25, LQ_stage=False, depth=6, unfold_size=2, mlp_codebook=False):
-        super().__init__(1, 1, 0.25, False, depth)
+        super().__init__(n_shared, e_dim, 0.25, False, depth)
         self.unfold_size = unfold_size
         self.unfold = nn.Unfold(kernel_size=(self.unfold_size, self.unfold_size))
         self.beta = beta
@@ -19,10 +19,6 @@ class BlockBasedResidualVectorQuantizer3D_forone(ResidualVectorQuantizer):
         
         self.n_shared = n_shared
         self.n_task = n_task
-
-        # 共享的/公有的codebook
-        self.shared_codebook = nn.Embedding(self.n_shared , e_dim)
-        self.shared_codebook.weight.data.uniform_(-1.0 / self.n_shared , 1.0 / self.n_shared)
 
     def forward(self,z,one_hot):
         b,c,d,h,w = z.shape # 1,64,4,32,32
@@ -33,13 +29,13 @@ class BlockBasedResidualVectorQuantizer3D_forone(ResidualVectorQuantizer):
         # print("z_flattened2.shape", z_flattened.shape)
         z_q = z_flattened
 
-        codebook = self.shared_codebook.weight
+        codebook = self.embedding.weight
         z_q, residual, indices = 0, z_flattened, []
 
         for i in range(self.depth):
             d = self.dist(residual, codebook)  # b x N
             min_encoding_indices = torch.argmin(d, dim=1)  # b x 1
-            delta = self.shared_codebook(min_encoding_indices)
+            delta = self.embedding(min_encoding_indices)
 
             z_q = z_q + delta
             residual = residual - delta
