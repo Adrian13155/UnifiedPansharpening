@@ -23,49 +23,41 @@ def setup_seeds(seed):
 setup_seeds(1)
 
 
-class DURE(nn.Module): ## without alpha, with two thr
+class DURE3D(nn.Module): ## without alpha, with two thr
     def __init__(self, Ch = 8, stages = 4, nc = 32):
-        super(DURE, self).__init__()
+        super(DURE3D, self).__init__()
         self.s  = stages
         self.upMode = 'bilinear'
         self.nc = nc
-        sobel_x = (torch.FloatTensor([[-1.0,0,-1.0],[-2.0,0,2.0],[-1.0,0,-1.0]])).cuda()
-        sobel_x = sobel_x.unsqueeze(dim=0).unsqueeze(dim=0)
-        sobel_y = (torch.FloatTensor([[-1.0,-2.0,-1.0],[0,0,0],[1.0,2.0,1.0]])).cuda()
-        sobel_y = sobel_y.unsqueeze(dim=0).unsqueeze(dim=0)
-        self.sobel = Sobel(sobel_x,sobel_y)
-        self.Tsobel = Sobel_T(sobel_x,sobel_y)
         ## The modules for learning the measurement matrix D and D^T
-        self.DT = nn.Sequential(nn.ConvTranspose2d(Ch, self.nc, kernel_size=3, stride=2, padding=1,output_padding=1),
+        self.DT = nn.Sequential(nn.ConvTranspose3d(1, self.nc, kernel_size=3, stride=(1, 2, 2), padding=1,output_padding=(0, 1, 1)),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.Conv3d(self.nc, self.nc, kernel_size=3, stride=(1, 1, 1), padding=1),
                                 nn.ReLU(),
-                                nn.ConvTranspose2d(self.nc, Ch, kernel_size=3, stride=2, padding=1,output_padding=1))
-        self.D  = nn.Sequential(nn.Conv2d(Ch, self.nc, kernel_size=3, stride=2, padding=1),
+                                nn.ConvTranspose3d(self.nc, 1, kernel_size=3, stride=(1, 2, 2), padding=1, output_padding=(0, 1, 1)))
+        self.D  = nn.Sequential(nn.Conv3d(1, self.nc, kernel_size=3, stride=(1, 2 ,2), padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.Conv3d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, Ch, kernel_size=3, stride=2, padding=1))
+                                nn.Conv3d(self.nc, 1, kernel_size=3, stride=(1, 2, 2), padding=1))
 
 
         ## The modules for learning the measurement matrix G and G^T
-        self.HT = nn.Sequential(nn.ConvTranspose2d(1, self.nc, kernel_size=3, stride=1, padding=1),
+        self.I = nn.Sequential(nn.ConvTranspose3d(1, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.Conv3d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.ConvTranspose2d(self.nc, Ch, kernel_size=3, stride=1, padding=1))
-        self.H  = nn.Sequential(nn.Conv2d(Ch, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.ConvTranspose3d(self.nc, 1, kernel_size=3, stride=1, padding=1))
+        
+        self.HT = nn.Sequential(nn.ConvTranspose3d(1, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
+                                nn.Conv3d(self.nc, self.nc, kernel_size=3, stride=1, padding=1),
                                 nn.ReLU(),
-                                nn.Conv2d(self.nc, 1, kernel_size=3, stride=1, padding=1))    
+                                nn.ConvTranspose3d(self.nc, 1, kernel_size=3, stride=1, padding=1))
         
         self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[1,1,1,2])
         self.proxNetCodeBook = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1])
 
-        checkpoint_path = "/data/cjj/projects/codebookCode/experiments/Stage2_LowParam_512:128_Iter6:3/models/epoch_143_step_6320_2s_G.pth"
-        checkpoint = torch.load(checkpoint_path)
-        self.proxNetCodeBook.load_state_dict(checkpoint, strict=False)
 
         self.alpha = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
         self.alpha_F = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
@@ -93,21 +85,40 @@ class DURE(nn.Module): ## without alpha, with two thr
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0.0)  
 
-    def forward(self, M, P, one_hot):   
-        B,C,H,W = M.shape
-        if C == 4:
-            M = M.repeat_interleave(2, dim=1)
+    def forward(self, M, P, one_hot): 
+        """
+        input:
+        M: LRMS, [B,D,h,w]
+        P: PAN, [B,1,H,W]
+        H,W = h * 4, w * 4
+        """  
         Ft = F.interpolate(M , scale_factor = 4, mode = self.upMode)
-        B,_,H,W = Ft.shape
+
+        M = M.unsqueeze(1)
+        P = P.unsqueeze(1).repeat(1,1,M.shape[2],1,1)
+        print("P.shape",P.shape)
+        Ft = Ft.unsqueeze(1)
+
+        print(Ft.shape)
+        B,C,D,H,W = Ft.shape
         K = Ft.clone()
          
         for i in range(0, self.s):           
-
+            """
+            H^T(HF-P) = H^T*H*F - H^T*P = IF - H^TP
+            """
+            # t = self.D(Ft)
+            # print("t.shape: ", t.shape)
             ## F subproblem  
-            Grad_F = self.DT(self.D(Ft) - M) + self.HT(self.H(Ft) - P) + self.alpha[i] * (Ft - K)
+
+            Grad_F = self.DT(self.D(Ft) - M) + self.I(Ft) - self.HT(P) + self.alpha[i] * (Ft - K)
             F_middle = Ft - self.alpha_F[i] * Grad_F
+
+            # F_middle.shape: [B, 1, C, H, W]
             # Ft,codebook_loss, _, _, _ = self.proxNetCodeBook(F_middle, one_hot)
-            Ft = self.proxNet(F_middle) 
+            print("F_middle.shape:", F_middle.shape)
+            exit(0)
+            # Ft = self.proxNet(F_middle) 
 
             ## K subproblem
             Grad_K = self.alpha[i] * (K - Ft)
