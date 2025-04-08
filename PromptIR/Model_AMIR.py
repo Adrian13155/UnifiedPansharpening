@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 # from .Component import *
-from .Component import *
+from Component import *
 import torch.nn.functional as F
 import numbers
 from einops import rearrange 
