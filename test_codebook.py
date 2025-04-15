@@ -20,6 +20,7 @@ from datetime import datetime
 # io=dataIO()
 from torch.utils.tensorboard import SummaryWriter
 from codebook.model.network import Network
+from codebook.model.model3D.network3D import Network3D
 
 def get_one_hot(label, num_classes):
     one_hot = torch.zeros(num_classes)
@@ -79,11 +80,13 @@ def main(opt):
     list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset]
 
 
-    model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
+    model = Network3D().cuda()
 
-    # checkpoint_path = "/data/cjj/projects/codebookCode/experiments/Stage2_LowParam_512:128_Iter6:3/models/epoch_143_step_6320_2s_G.pth"
-    # checkpoint = torch.load(checkpoint_path)
-    # model.load_state_dict(checkpoint, strict=False)
+    checkpoint_path = "/data/cjj/projects/UnifiedPansharpening/experiment/03-27_23:14_3D Codebook Stage2 Shared and Task no gard/epoch=126.pth"
+        
+    checkpoint = torch.load(checkpoint_path)
+
+    model.load_state_dict(checkpoint)
 
     logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
     logger.info(opt)
@@ -101,16 +104,16 @@ def main(opt):
             for index, datas in enumerate(tqdm(val_dataloader,desc=f"Validating {data_name}")):
                 count += 1
                 inp_ms, inp_pan, inp_gt = datas[0], datas[1], datas[2]
-                print("inp_ms:",inp_ms.shape)
+                # print("inp_ms:",inp_ms.shape)
                 inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                 inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
-                inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)
+                inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2).cuda()
 
                 inp_ms = F.interpolate(inp_ms , scale_factor = 4, mode = 'bilinear')
-                output,_,_,_,_ = model(inp_ms, one_hot)
+                output,_,_,_ = model(inp_gt, one_hot)
 
                 netOutput_np = output.cpu().numpy()[0]
-                gtLabel_np = inp_gt.numpy()[0]
+                gtLabel_np = inp_gt.cpu().numpy()[0]
                 psnrValue = PSNR(gtLabel_np, netOutput_np)
                 sum_psnr += psnrValue                         
             avg_psnr = sum_psnr / count

@@ -1,6 +1,9 @@
+import sys
+sys.path.append("/data/cjj/projects/UnifiedPansharpening")
 import torch
 import torch.nn as nn
-from Model_AMIR import *
+from PromptIR.Model_AMIR import *
+from PromptIR.nafnet.nafnet import NAFBlock, NAFBlock3d
 
 def to_3d(x):
     return rearrange(x, 'b c d h w -> b (d h w) c')
@@ -245,14 +248,166 @@ class ProxNet_Prompt3D(nn.Module):
  
         return out_dec_level1
     
+class ICB(nn.Module):
+    """
+    Instruction Condition Block (ICB)
+    Paper Section 3.3
+    """
+
+    def __init__(self, feature_dim, text_dim=384):
+        super(ICB, self).__init__()
+        self.fc    = nn.Linear(text_dim, feature_dim)
+        self.block = NAFBlock3d(feature_dim)
+        self.beta  = nn.Parameter(torch.zeros((1, feature_dim, 1, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, feature_dim, 1, 1, 1)), requires_grad=True)
+
+    def forward(self, x, text_embedding):
+        gating_factors = torch.sigmoid(self.fc(text_embedding))
+        gating_factors = gating_factors.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+
+        f = x * self.gamma + self.beta  # 1) learned feature scaling/modulation
+        f = f * gating_factors          # 2) (soft) feature routing based on text
+        f = self.block(f)               # 3) block feature enhancement
+        return f + x
+    
+
+
+
+class ProxNet_Prompt3D_WithTextPrompt(nn.Module):
+    def __init__(self, 
+        inp_channels=1, 
+        out_channels=1, 
+        dim = 16,
+        num_blocks = [4,6,6,8], 
+        num_refinement_blocks = 4,
+        heads = [1,2,4,8],
+        ffn_expansion_factor = 2.66,
+        bias = False,
+        LayerNorm_type = 'WithBias',   ## Other option 'BiasFree'
+        decoder = True,
+    ):
+
+        super(ProxNet_Prompt3D_WithTextPrompt, self).__init__()
+
+        self.patch_embed = OverlapPatchEmbed3D(inp_channels, dim)
+        
+        
+        self.decoder = decoder
+
+        dim_level1 = int(dim * 2 ** 0)
+        dim_level2 = int(dim * 2 ** 1)
+        dim_level3 = int(dim * 2 ** 2)
+        dim_level4 = int(dim * 2 ** 3)
+
+        self.encode_prompt1 = ICB(feature_dim=dim_level1,text_dim=384)
+        self.encode_prompt2 = ICB(feature_dim=dim_level2,text_dim=384)
+        self.encode_prompt3 = ICB(feature_dim=dim_level3,text_dim=384)
+
+        self.decode_prompt3 = ICB(feature_dim=dim_level3,text_dim=384)
+        self.decode_prompt2 = ICB(feature_dim=dim_level2,text_dim=384)
+        self.decode_prompt1 = ICB(feature_dim=dim_level2,text_dim=384)
+        
+
+        self.encoder_level1 = nn.Sequential(*[TransformerBlock3D(dim=dim_level1, num_heads=heads[0], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[0])])
+        
+        self.down1_2 = Downsample3D(dim) ## From Level 1 to Level 2
+
+        self.encoder_level2 = nn.Sequential(*[TransformerBlock3D(dim=dim_level2, num_heads=heads[1], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[1])])
+        
+        self.down2_3 = Downsample3D(int(dim*2**1)) ## From Level 2 to Level 3
+        self.encoder_level3 = nn.Sequential(*[TransformerBlock3D(dim=dim_level3, num_heads=heads[2], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[2])])
+
+        self.down3_4 = Downsample3D(int(dim*2**2)) ## From Level 3 to Level 4
+        self.latent = nn.Sequential(*[TransformerBlock3D(dim=dim_level4, num_heads=heads[3], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[3])])
+        
+        self.up4_3 = Upsample3D(int(dim*2**3)) ## From Level 4 to Level 3
+        
+        self.reduce_chan_level3 = nn.Conv3d(dim_level4, dim_level3, kernel_size=1, bias=bias)
+        
+        self.decoder_level3 = nn.Sequential(*[TransformerBlock3D(dim=dim_level3, num_heads=heads[2], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[2])])
+
+
+        self.up3_2 = Upsample3D(int(dim*2**2)) ## From Level 3 to Level 2
+        self.reduce_chan_level2 = nn.Conv3d(dim_level3, int(dim*2**1), kernel_size=1, bias=bias)
+
+        self.decoder_level2 = nn.Sequential(*[TransformerBlock3D(dim=int(dim*2**1), num_heads=heads[1], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[1])])
+        
+        self.up2_1 = Upsample3D(int(dim*2**1))  ## From Level 2 to Level 1  (NO 1x1 conv to reduce channels)
+
+
+        self.decoder_level1 = nn.Sequential(*[TransformerBlock3D(dim=int(dim*2**1), num_heads=heads[0], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[0])])
+        
+        self.refinement = nn.Sequential(*[TransformerBlock3D(dim=int(dim*2**1), num_heads=heads[0], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_refinement_blocks)])
+                    
+        self.output = nn.Conv3d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+
+    def forward(self, inp_img, text_emb):
+        B, C, D, H, W = inp_img.shape
+        
+        inp_enc_level1 = self.patch_embed(inp_img)
+        
+        inp_enc_level1 = self.encode_prompt1(inp_enc_level1, text_emb)
+        out_enc_level1 = self.encoder_level1(inp_enc_level1) # dim
+        inp_enc_level2 = self.down1_2(out_enc_level1) # dim * 2
+
+        inp_enc_level2 = self.encode_prompt2(inp_enc_level2, text_emb)
+        out_enc_level2 = self.encoder_level2(inp_enc_level2) 
+        inp_enc_level3 = self.down2_3(out_enc_level2)  # dim * 2 * 2
+
+        inp_enc_level3 = self.encode_prompt3(inp_enc_level3, text_emb)
+        out_enc_level3 = self.encoder_level3(inp_enc_level3) 
+        inp_enc_level4 = self.down3_4(out_enc_level3) #  dim * 2 * 2 * 2
+        
+        latent = self.latent(inp_enc_level4) 
+        inp_dec_level3 = self.up4_3(latent)
+
+        inp_dec_level3 = torch.cat([inp_dec_level3, out_enc_level3], 1)
+        inp_dec_level3 = self.reduce_chan_level3(inp_dec_level3)
+        inp_dec_level3 = self.decode_prompt3(inp_dec_level3, text_emb)
+        out_dec_level3 = self.decoder_level3(inp_dec_level3)
+        inp_dec_level2 = self.up3_2(out_dec_level3)
+
+        inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
+        inp_dec_level2 = self.reduce_chan_level2(inp_dec_level2)
+        inp_dec_level2 = self.decode_prompt2(inp_dec_level2, text_emb)
+        out_dec_level2 = self.decoder_level2(inp_dec_level2)
+        
+
+        inp_dec_level1 = self.up2_1(out_dec_level2)
+        inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
+        inp_dec_level1 = self.decode_prompt1(inp_dec_level1, text_emb)
+        out_dec_level1 = self.decoder_level1(inp_dec_level1) 
+
+        out_dec_level1 = self.refinement(out_dec_level1) 
+
+
+        out_dec_level1 = self.output(out_dec_level1) + inp_img
+
+ 
+        return out_dec_level1
+    
 if __name__== "__main__":
+
+    # 对于ICB的调试
+    # torch.cuda.set_device(2)
+    # model = ICB(feature_dim=128,text_dim=384).cuda()
+    # x = torch.rand(4, 128, 4, 64, 64).cuda()
+    # text_embedding = torch.rand(4, 384).cuda()
+    # output = model(x, text_embedding)
+    # print(sum(p.numel() for p in model.parameters() )/1e6, "M")
+    # print("output.shape: ",output.shape)
+
+    # exit(0)
+
+    
     torch.cuda.set_device(0)
     # model = ProxNet_AMIR_Prompt(inp_channels=9, out_channels=8, dim = 16, num_blocks=[2, 2, 2, 3])
-    model = ProxNet_Prompt3D(inp_channels=1, out_channels=1, dim=8, num_blocks=[1,1,1,2]).cuda()
+    model = ProxNet_Prompt3D_WithTextPrompt(inp_channels=1, out_channels=1, dim=8, num_blocks=[1,1,1,2]).cuda()
 
-    F_middle = torch.rand(4, 1, 4, 128, 128).cuda()
+    F_middle = torch.rand(4, 1, 8, 128, 128).cuda()
+    text_emb = torch.rand(4, 384).cuda()
 
-    output = model(F_middle)
+    output = model(F_middle, text_emb)
     print("output: ",output.shape)
     print(sum(p.numel() for p in model.parameters() )/1e6, "M")
 

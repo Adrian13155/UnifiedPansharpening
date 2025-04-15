@@ -73,6 +73,29 @@ class MatDataset(data.Dataset):
         
         return ms, pan, gt
     
+class MatWithTextDataset(data.Dataset):
+    def __init__(self, img_dir, text_dir):
+        self.img_dir = img_dir
+        self.img_list = os.listdir(os.path.join(img_dir, 'MS_32/'))
+        self.img_list.sort()
+        self.text_dir = text_dir
+
+    def __len__(self):
+        return len(self.img_list)
+    
+    def __getitem__(self, idx):
+        pan = scipy.io.loadmat(os.path.join(self.img_dir, 'PAN_128', self.img_list[idx]))['pan0'][...]
+        ms = scipy.io.loadmat(os.path.join(self.img_dir, 'MS_32', self.img_list[idx]))['ms0'][...]
+        gt = scipy.io.loadmat(os.path.join(self.img_dir, 'GT_128', self.img_list[idx]))['gt0'][...]
+        text = os.path.join(self.text_dir, self.img_list[idx]).replace("mat", "npy")
+        # print("text_path:", text)
+        pan = np.array(pan, dtype=np.float32)
+        ms = np.array(ms, dtype=np.float32)
+        gt = np.array(gt, dtype=np.float32)
+        text = np.load(text).astype(np.float32).squeeze(0)
+        
+        return ms, pan, gt, text
+    
 class CombineMatDataset(data.Dataset):
     """
     遥感图像mat文件混合数据集，这里以混合数据集中最小的长度为整个数据集的长度，但会导致较长的数据集中的某些数据训练不到，所以每次epoch都要进行shuffle
@@ -130,12 +153,38 @@ class CombineMatMaxDataset(data.Dataset):
         return tuple(data_lists)
 
 if __name__ == "__main__":
-    validation_data_name = 'YOUR PATH.h5'  # your data path
-    validation_data = h5py.File(validation_data_name, 'r')
-    validation_dataset = my_dataset(validation_data)
-    del validation_data
-    data_loader = torch.utils.data.DataLoader(validation_dataset, batch_size=1, shuffle=False)
-    for index, item in enumerate(data_loader):
-        print(item[0])      
-        plt.show()
-        if index==1:break
+    dataset_folder = "/data/datasets/pansharpening/NBU_dataset0730"
+    text_dataset_path = "/data/cjj/dataset/pansharpening/NBU_dataset0730"
+    dataset_namelist = ['GF', 'QB', 'WV2', 'WV4']
+    gf_path = os.path.join(dataset_folder,'GF1/train')
+    qb_path = os.path.join(dataset_folder,'QB/train')
+    wv2_path = os.path.join(dataset_folder,'WV2/train')
+    wv4_path = os.path.join(dataset_folder,'WV4/train')
+
+    gf_text_path = os.path.join(text_dataset_path,'GF1/train')
+    qb_text_path = os.path.join(text_dataset_path,'QB/train')
+    wv2_text_path = os.path.join(text_dataset_path,'WV2/train')
+    wv4_text_path = os.path.join(text_dataset_path,'WV4/train')
+
+    gf_dataset, qb_dataset, wv2_dataset, wv4_dataset = MatWithTextDataset(gf_path, gf_text_path), MatWithTextDataset(qb_path, qb_text_path), MatWithTextDataset(wv2_path, wv2_text_path), MatWithTextDataset(wv4_path, wv4_text_path)
+
+    dataset_labels = {'GF': 0, 'QB': 1, 'WV2': 2, 'WV4': 3}
+    train_dataset = CombineMatDataset(datasets=[gf_dataset, qb_dataset, wv2_dataset, wv4_dataset],
+                            dataset_labels=[dataset_labels['GF'], dataset_labels['QB'], dataset_labels['WV2'], dataset_labels['WV4']])
+    
+    from torch.utils.data import DataLoader 
+    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False)
+    
+    for i,train_data in enumerate(train_dataloader):
+        for list,data_name in zip(train_data, dataset_namelist):
+            datas, one_hot = list
+            inp_ms, inp_pan, inp_gt, text= datas
+            print("text:", text.shape)
+            # print(len(a))
+        # print("a.shape", a.shape)
+        # print("b.shape", b.shape)
+        # print("c.shape", c.shape)
+        # print("d.shape", d.shape)
+        exit(0)
+    
+

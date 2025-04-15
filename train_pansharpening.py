@@ -2,18 +2,16 @@ import os
 from datetime import datetime
 import torch.nn.functional as F
 import argparse
-from Dataset import MatDataset, CombineMatDataset
-import numpy as np
+from Dataset import MatDataset, CombineMatDataset, MatWithTextDataset
 import torch
 from torch import nn
 import torch.utils.data as data
 from torch.utils.data import DataLoader 
 from torch.optim.lr_scheduler import CosineAnnealingLR 
 from tqdm import tqdm
-import random
 import logging 
-import pandas as pd
-from Model import DURE
+from Model3D import DURE3D
+from Model2D_3D import DURE2D_3D
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
 # transformData = transformData()
@@ -56,15 +54,18 @@ def main(opt):
 
     # train
     dataset_folder = opt.pan_root
+    text_dataset_path = opt.pan_text_root
 
     best_psnr_gf, best_psnr_qb = -float('inf'), -float('inf')
     best_psnr_wv4, best_psnr_wv2 = -float('inf'), -float('inf')
 
-    gf_path = os.path.join(dataset_folder,'GF1/train')
-    qb_path = os.path.join(dataset_folder,'QB/train')
-    wv2_path = os.path.join(dataset_folder,'WV2/train')
-    wv4_path = os.path.join(dataset_folder,'WV4/train')
-    gf_dataset, qb_dataset, wv2_dataset, wv4_dataset = MatDataset(gf_path), MatDataset(qb_path), MatDataset(wv2_path), MatDataset(wv4_path)
+    gf_path, gf_text_path = os.path.join(dataset_folder,'GF1/train'), os.path.join(text_dataset_path,'GF1/train')
+    qb_path, qb_text_path = os.path.join(dataset_folder,'QB/train'), os.path.join(text_dataset_path,'QB/train')
+    wv2_path, wv2_text_path = os.path.join(dataset_folder,'WV2/train'), os.path.join(text_dataset_path,'WV2/train')
+    wv4_path, wv4_text_path = os.path.join(dataset_folder,'WV4/train'), os.path.join(text_dataset_path,'WV4/train')
+
+
+    gf_dataset, qb_dataset, wv2_dataset, wv4_dataset = MatWithTextDataset(gf_path, gf_text_path), MatWithTextDataset(qb_path, qb_text_path), MatWithTextDataset(wv2_path, wv2_text_path), MatWithTextDataset(wv4_path, wv4_text_path)
     dataset_labels = {'GF': 0, 'QB': 1, 'WV2': 2, 'WV4': 3}
     train_dataset = CombineMatDataset(datasets=[gf_dataset, qb_dataset, wv2_dataset, wv4_dataset],
                             dataset_labels=[dataset_labels['GF'], dataset_labels['QB'], dataset_labels['WV2'], dataset_labels['WV4']])
@@ -76,27 +77,33 @@ def main(opt):
     del gf_dataset, qb_dataset, wv2_dataset, wv4_dataset
 
     # validation
-    val_gf_path = os.path.join(dataset_folder,'GF1/test')
-    val_qb_path = os.path.join(dataset_folder,'QB/test')
-    val_wv2_path = os.path.join(dataset_folder,'WV2/test')
-    val_wv4_path = os.path.join(dataset_folder,'WV4/test')
+    val_gf_path, val_gf_text_path = os.path.join(dataset_folder,'GF1/test'), os.path.join(text_dataset_path,'GF1/test')
+    val_qb_path, val_qb_text_path = os.path.join(dataset_folder,'QB/test'), os.path.join(text_dataset_path,'QB/test')
+    val_wv2_path, val_wv2_text_path = os.path.join(dataset_folder,'WV2/test'), os.path.join(text_dataset_path,'WV2/test')
+    val_wv4_path, val_wv4_text_path = os.path.join(dataset_folder,'WV4/test'), os.path.join(text_dataset_path,'WV4/test')
     val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset = \
-                                MatDataset(val_gf_path),MatDataset(val_qb_path), MatDataset(val_wv2_path), \
-                                MatDataset(val_wv4_path)
+                                MatWithTextDataset(val_gf_path, val_gf_text_path),MatWithTextDataset(val_qb_path, val_qb_text_path), MatWithTextDataset(val_wv2_path, val_wv2_text_path), \
+                                MatWithTextDataset(val_wv4_path, val_wv4_text_path)
     list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset]
 
-    model = DURE(opt.Ch, opt.Stage, opt.nc).cuda()
+    model = DURE3D(opt.Ch, opt.Stage, opt.nc).cuda()
+    # model = DURE2D_3D(opt.Ch, opt.Stage, opt.nc).cuda()
 
-    if opt.checkpoint_path is not None:
-        checkpoint = torch.load(opt.checkpoint_path)
-        model.load_state_dict(checkpoint)
+    logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
+    logger.info(opt)
+    logger.info(f"model params: {sum(p.numel() for p in model.parameters() )/1e6} M")
+    logger.info(f"Network Structure: {str(model)}")
+
+    # if opt.checkpoint_path is not None:
+    #     checkpoint = torch.load(opt.checkpoint_path)
+    #     model.load_state_dict(checkpoint)
+    #     logger.info(f"Load Checkpoint from {opt.checkpoint_path}")
 
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
     L1 = nn.L1Loss().cuda() 
 
-    logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
-    logger.info(opt)
+    
 
 
     for epoch in range(opt.epoch_start,num_epoch):
@@ -110,12 +117,13 @@ def main(opt):
             for list,data_name in zip(train_data_lists, dataset_namelist):
                 optimizer_G.zero_grad() 
                 datas, one_hot = list
-                inp_ms, inp_pan, inp_gt = datas
+                inp_ms, inp_pan, inp_gt, text = datas
                 inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                 inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                 inp_gt = inp_gt.type(torch.FloatTensor).cuda().permute(0,3,1,2) 
+                text = text.type(torch.FloatTensor).cuda()
 
-                restored  = model(inp_ms, inp_pan, one_hot)
+                restored  = model(inp_ms, inp_pan, one_hot, text)
 
                 loss_l1 = L1(restored, inp_gt)
                 loss_G = loss_l1 
@@ -140,12 +148,12 @@ def main(opt):
                     one_hot = get_one_hot(label, num_datasets).unsqueeze(0)
                     for index, datas in enumerate(tqdm(val_dataloader,desc=f"Validating {data_name}")):
                         count += 1
-                        inp_ms, inp_pan, inp_gt = datas[0], datas[1], datas[2]
+                        inp_ms, inp_pan, inp_gt, text = datas[0], datas[1], datas[2], datas[3]
                         inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                         inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                         inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)
-
-                        output = model(inp_ms, inp_pan, one_hot)
+                        text = text.type(torch.FloatTensor).cuda()
+                        output = model(inp_ms, inp_pan, one_hot, text)
 
                         netOutput_np = output.cpu().numpy()[0]
                         gtLabel_np = inp_gt.numpy()[0]
@@ -178,19 +186,20 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='no_gard_continue', help='experiment name')
-    parser.add_argument('-learning_rate', help='Set the learning rate', default=0.000046, type=float)
-    parser.add_argument('-batch_size', help='Set the training batch size', default=16, type=int)
-    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=196, type=int)
+    parser.add_argument('--exp_name', type=str, default='WavBestFramework', help='experiment name')
+    parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
+    parser.add_argument('-batch_size', help='Set the training batch size', default=1, type=int)
+    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=400, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
+    parser.add_argument('-pan_text_root', help='', default='/data/cjj/dataset/pansharpening/NBU_dataset0730', type=str)
+    # parser.add_argument('-checkpoint_path', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment/04-09_19:03_3D framework With No Prompt/epoch=15.pth', type=str)
     parser.add_argument('-save_dir', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='', default=0, type=int)
+    parser.add_argument('-gpu_id', help='', default=4, type=int)
     parser.add_argument('-Ch', help='', default=8, type=int)
     parser.add_argument('-Stage', help='', default=4, type=int)
     parser.add_argument('-nc', help='', default=32, type=int)
     parser.add_argument('-total_iteration', help='', default=2e5, type=int)
-    parser.add_argument('-checkpoint_path', help='', default="/data/cjj/projects/UnifiedPansharpening/experiment/03-18_23:12_no_gard_form/epoch=195.pth", type=str)
     
     args = parser.parse_args()
     
