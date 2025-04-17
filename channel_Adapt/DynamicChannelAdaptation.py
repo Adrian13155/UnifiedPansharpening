@@ -20,15 +20,14 @@ class SinusoidalTimeEmbedding(nn.Module): #正余弦位置编码
         return pe
 
 class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的卷积
-    def __init__(self, in_channels, out_channels, batch_size, scale, kernel_size=3, embedding_dim=64, num_heads=1, dropout=0.1,is_transpose=False):
+    def __init__(self, in_channels, out_channels, batch_size, L, scale, kernel_size=3, embedding_dim=64, num_heads=1, dropout=0.1,is_transpose=False):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.embedding_dim = embedding_dim
         self.batch_size = batch_size
-        self.num_channels = max(self.out_channels,self.in_channels)
-        self.L = self.num_channels  ##初始化可学习权重的形状L*out_channels；可学习偏置1*out_channels;后续需要zw + e_lambda，因此L要确定
+        self.L = L
         self.scale = scale
         self.K = kernel_size
         self.is_transpose = is_transpose
@@ -41,7 +40,7 @@ class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的�
             nn.GELU(),
             nn.Linear(out_channels, out_channels)
         )
-        self.wavelength_embedding = nn.ModuleList([tem for _ in range(self.num_channels)])  #为了PAN->MS也用上wavelength_MS的信息，因此加上max,min
+        self.wavelength_embedding = nn.ModuleList([tem for _ in range(in_channels)])
         
         # 动态权重生成的Transformer
         encoder_layer = nn.TransformerEncoderLayer(
@@ -53,14 +52,14 @@ class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的�
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=2)
         
         # 查询token
-        self.weight_query = nn.Parameter(torch.randn(self.L, out_channels))
+        self.weight_query = nn.Parameter(torch.randn(L, out_channels))
         self.bias_query = nn.Parameter(torch.randn(1, out_channels))
         
         # 权重和偏置生成器
         self.weight_generator = nn.Sequential(
-            nn.Linear(out_channels, min(in_channels,out_channels) * kernel_size * kernel_size),
+            nn.Linear(out_channels, out_channels * kernel_size * kernel_size),
             nn.GELU(),
-            nn.Linear(min(in_channels,out_channels) * kernel_size * kernel_size, min(in_channels,out_channels) * kernel_size * kernel_size)
+            nn.Linear(out_channels * kernel_size * kernel_size, out_channels * kernel_size * kernel_size)
         )
         
         self.bias_generator = nn.Sequential(
@@ -80,8 +79,8 @@ class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的�
         B, Cin, H, W = x.shape
         
         # 1. 波长位置编码+嵌入 
-        e_lambda = self.pos_encoder(wavelengths.view(-1)).view(self.num_channels,-1).to(torch.float32)
-        emb = torch.zeros(self.num_channels,self.out_channels)
+        e_lambda = self.pos_encoder(wavelengths.view(-1)).view(self.in_channels,-1).to(torch.float32)
+        emb = torch.zeros(self.in_channels,self.out_channels)
         for i, md_embed in enumerate(self.wavelength_embedding):
                 md_emb = md_embed(e_lambda[i, :])  # (N, Dout)
                 emb[i,:] = md_emb # (N, Dout)
@@ -163,6 +162,7 @@ if __name__=="__main__":
         batch_size = 4,
         kernel_size=7,
         embedding_dim=320,
+        L=8,
         scale = 1,
         is_transpose = False
     )
@@ -173,6 +173,7 @@ if __name__=="__main__":
         batch_size = 4,
         kernel_size=7,
         embedding_dim=320,
+        L=1,
         scale = 1,
         is_transpose = True
     )
@@ -183,6 +184,7 @@ if __name__=="__main__":
         batch_size = 4,
         kernel_size=7,
         embedding_dim=320,
+        L=8,
         scale = 4,
         is_transpose = False
     )
@@ -193,6 +195,7 @@ if __name__=="__main__":
         batch_size = 4,
         kernel_size=7,
         embedding_dim=320,
+        L=8,
         scale = 4,
         is_transpose = True
     )
@@ -203,10 +206,11 @@ if __name__=="__main__":
     MS_downsample = torch.randn(4,8,16,16) #bs,C,h,w
     # 假设每个通道的中心波长 (可以实际替换为遥感数据的真实波长)
     wavelengths_MS = torch.randn(8)
+    wavelengths_PAN = torch.randn(1)
 
     # 前向变换
     H_MS = H(MS, wavelengths_MS)   #MS->PAN
-    HT_PAN = HT(PAN, wavelengths_MS)  #PAN->MS
+    HT_PAN = HT(PAN, wavelengths_PAN)  #PAN->MS
     D_MS = D(MS, wavelengths_MS)   #MS->MS_downsample
     DT_MS_downsample = DT(MS_downsample, wavelengths_MS) #MS_downsample->MS
 
