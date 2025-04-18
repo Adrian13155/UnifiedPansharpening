@@ -12,6 +12,8 @@ import pdb
 
 from PromptIR.Model_AMIR import ProxNet_Prompt
 from codebook.model.model3D.network3D import Network3D
+from AdaIR.AdaIR import AdaIR
+from channel_Adapt.DynamicChannelAdaptation import DynamicChannelAdaptation
 
 def setup_seeds(seed):
     torch.manual_seed(seed)
@@ -34,6 +36,8 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
     * 3DPromptIR无任何提示 ProxNet_Prompt3D(inp_channels=1, out_channels=1, dim=8, num_blocks=[1,1,1,2])
     * 3DpromptIR+文本提示 ProxNet_Prompt3D_WithTextPrompt(inp_channels=1, out_channels=1, dim=8, num_blocks=[1,1,1,2])
     * WavBest: 
+    * AdaIR:AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8],
+        ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
     """
     def __init__(self, Ch = 8, stages = 4, nc = 32):
         super(DURE2D_3D, self).__init__()
@@ -65,7 +69,7 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
                                 nn.ReLU(),
                                 nn.Conv2d(self.nc, 1, kernel_size=3, stride=1, padding=1))  
         
-        self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[1,1,1,2])
+        self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         self.proxNetCodeBook = Network3D()
 
@@ -143,6 +147,100 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
             Ft = Ft.float().view(B, C, 2, H , W ).mean(dim=2)
         return Ft
     
+class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
+    def __init__(self, Ch = 8, stages = 4, nc = 32):
+        super(DURE2D_3DWithAdaptiveConv, self).__init__()
+        self.s  = stages
+        self.upMode = 'bilinear'
+        self.nc = nc
+
+        self.H4 = DynamicChannelAdaptation(in_channels=4,out_channels=1,kernel_size=7,embedding_dim=320,scale = 1,is_transpose = False)
+
+        self.HT4 = DynamicChannelAdaptation(in_channels=1,out_channels=4,kernel_size=7,embedding_dim=320,scale = 1,is_transpose = True)
+
+        self.D4 = DynamicChannelAdaptation(in_channels=4,out_channels=4,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = False)
+
+        self.DT4 = DynamicChannelAdaptation(in_channels=4,out_channels=4,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = True)
+
+        self.H8 = DynamicChannelAdaptation(in_channels=8,out_channels=1,kernel_size=7,embedding_dim=320,scale = 1,is_transpose = False)
+
+        self.HT8 = DynamicChannelAdaptation(in_channels=1,out_channels=8,kernel_size=7,embedding_dim=320,scale = 1,is_transpose = True)
+
+        self.D8 = DynamicChannelAdaptation(in_channels=8,out_channels=8,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = False)
+
+        self.DT8 = DynamicChannelAdaptation(in_channels=8,out_channels=8,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = True)
+
+        # self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=24, num_blocks=[2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+
+        
+        self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+
+        self.proxNetCodeBook = Network3D()
+
+        checkpoint_path = "/data/cjj/projects/UnifiedPansharpening/experiment/03-27_23:14_3D Codebook Stage2 Shared and Task no gard/epoch=126.pth"
+        
+        checkpoint = torch.load(checkpoint_path)
+
+        self.proxNetCodeBook.load_state_dict(checkpoint)
+
+
+        self.alpha = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
+        self.alpha_F = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
+        self.alpha_K = Parameter(0.1*torch.ones(self.s, 1),requires_grad=True)
+        self._initialize_weights()
+        torch.nn.init.normal_(self.alpha, mean=0.1, std=0.01)
+        torch.nn.init.normal_(self.alpha_F, mean=0.1, std=0.01)
+        torch.nn.init.normal_(self.alpha_K, mean=0.1, std=0.01)
+
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if m in self.proxNetCodeBook.modules():
+                continue
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)
+            elif isinstance(m, nn.ConvTranspose2d):
+                nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight.data)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias.data, 0.0)  
+
+    def forward(self, M, P, one_hot, text_emb): 
+        """
+        input:
+        M: LRMS, [B,c,h,w]
+        P: PAN, [B,1,H,W]
+        H,W = h * 4, w * 4
+        """
+        B,C,H,W = M.shape
+        Ft = F.interpolate(M , scale_factor = 4, mode = self.upMode)
+        B,_,H,W = Ft.shape
+        K = Ft.clone()
+
+        for i in range(0, self.s):
+            ## F subproblem  
+            if C == 4:
+                Grad_F = self.DT4(self.D4(Ft, one_hot) - M, one_hot) + self.HT4(self.H4(Ft,one_hot) - P, one_hot) + self.alpha[i] * (Ft - K)
+            else:
+                Grad_F = self.DT8(self.D8(Ft, one_hot) - M, one_hot) + self.HT8(self.H8(Ft,one_hot) - P, one_hot) + self.alpha[i] * (Ft - K)
+            
+            F_middle = Ft - self.alpha_F[i] * Grad_F
+
+            # F_middle.shape: [B, C, H, W]
+            Ft = self.proxNet(F_middle)
+
+            ## K subproblem
+            Grad_K = self.alpha[i] * (K - Ft)
+            K_middle = K - self.alpha_K[i] * Grad_K
+
+            K,codebook_loss,_,_ = self.proxNetCodeBook(K_middle, one_hot)
+        return Ft
+    
 def get_one_hot(label, num_classes):
     one_hot = torch.zeros(num_classes)
     one_hot[label] = 1
@@ -166,14 +264,14 @@ if __name__ == '__main__':
     # model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
     # for name, module in model.named_modules():
     #     print("name:", name, "module", module)
-    # torch.cuda.set_device(6)
-    model = DURE2D_3D(8, 4, 32).cuda()
+    torch.cuda.set_device(3)
+    model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
 
-    input = torch.rand(1, 8 ,32,32).cuda()
-    P = torch.rand(1, 1 , 128, 128).cuda()
-    text = torch.rand(1,384).cuda()
+    input = torch.rand(2, 4 ,32,32).cuda()
+    P = torch.rand(2, 1 , 128, 128).cuda()
+    text = torch.rand(2,384).cuda()
     one_hot = get_one_hot(1, 4)
-    one_hot = one_hot.unsqueeze(0)#.repeat(4,1)
+    one_hot = one_hot.unsqueeze(0).repeat(2,1)
     # print(one_hot.shape)
 
     output = model(input, P, one_hot, text)

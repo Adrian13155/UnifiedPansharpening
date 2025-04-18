@@ -20,19 +20,31 @@
 
 > 因为发现纯3D框架效果比较差，所以看一下把除codebook外的代码都改成2D看看是什么效果/
 
-* `Model3D.py`中的`DURE3D`是3D深度展开框架的代码，其中的`self.proxNet`目前是有3种选择，都写在类的注释下了。
+* `Model3D.py`中的`DURE3D`是3D深度展开框架的代码。
 
-> 其中的WavBest是论文Empower Generalizability for Pansharpening Through Text-Modulated Diffusion Model中的3D-Unet魔改过来的。
->
-> ProxNet_Prompt3D_WithTextPrompt是将InstructIR中加文本提示的方式改成了3D的后搬过来的。
+* `Model3Dwith2D.py`是在ProxNet中将3D特征处理成2D特征后进行处理，但后续发现效果不是很好。
 
+#### ProxNet
 
+* PromptIR，参考论文：[PromptIR: Prompting for All-in-One Blind Image Restoration](https://arxiv.org/abs/2306.13090)
+  * 纯正的2DpromptIR:`PromptIR/Model_AMIR.py`中的`ProxNet_Prompt`
+  * 3DpromptIR:`PromptIR/PromptIR3D.py`
+* WavBest，代码:`WavBEST/WavBEST.py`，是对比方法`TMdiff`中涉及到的U-Net
+* AdaIR，代码:`AdaIR/AdaIR.py`，参考论文：[ADAIR: ADAPTIVE ALL-IN-ONE IMAGE RESTORATION VIA FREQUENCY MINING AND MODULATION](https://arxiv.org/abs/2403.14614)，目前效果很好。
 
 ### 训练
 
 `train_codebook.py`是训练`codebook`的代码。
 
 `train_pansharpening.py`是训练深度展开框架的代码。
+
+### 自适应卷积
+
+代码：`channel_Adapt/DynamicChannelAdaptation.py`
+
+在代码`Model2D_3D.py`中的`DURE2D_3DWithAdaptiveConv`中使用到了自适应卷积，效果目前来看差不太多。
+
+参考论文：[FlexiMo: A Flexible Remote Sensing Foundation Model](https://arxiv.org/abs/2503.23844)
 
 ### 理论
 
