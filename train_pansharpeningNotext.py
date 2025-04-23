@@ -176,7 +176,7 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='Compared:PromptIRContinue', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='SpatialSpectralPromptProxNet', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
     parser.add_argument('-batch_size', help='批量大小', default=1, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
