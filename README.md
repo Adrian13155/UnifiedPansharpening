@@ -8,6 +8,42 @@
   * 对应的代码在`PromptIR/Model_AMIR.py`中的*ProxNet_Prompt*类
 * Codebook中`codebook/model/model3D`目录下的代码以及`codebook/model/vq3D.py`都是改成3D的代码，可以用来参考，其中`codebook/model/model3D/MSAB3D.py`中涉及到一些注意力的代码改成3D的，会比较麻烦，可以参考借鉴。
 
+#### SpatialPrompt和SpectralPrompt
+
+模型的核心代码在`PromptIR/SpatialChannelPrompt.py`下。
+
+训练代码`train_pansharpeningNotext.py`，需要设置的参数，一般就是批量大小4/8或者更多，`pan_root`是数据集路径，`save_dir`是日志保存路径，`gpu_id`是对应的显卡下标，`exp_name`是这个实验的名字。
+
+```python
+def get_opt():
+    parser = argparse.ArgumentParser(description='Hyper-parameters for network')
+    parser.add_argument('--exp_name', type=str, default='Compared:PromptIRContinue', help='experiment name')
+    parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
+    parser.add_argument('-batch_size', help='批量大小', default=1, type=int)
+    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
+    parser.add_argument('-num_epochs', help='', default=400, type=int)
+    parser.add_argument('-pan_root', help='数据集路径', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
+    parser.add_argument('-save_dir', help='日志保存路径', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
+    parser.add_argument('-gpu_id', help='gpu下标', default=0, type=int)
+    parser.add_argument('-Ch', help='', default=8, type=int)
+    parser.add_argument('-Stage', help='', default=4, type=int)
+    parser.add_argument('-nc', help='', default=32, type=int)
+    parser.add_argument('-total_iteration', help='', default=2e5, type=int)
+    
+    args = parser.parse_args()
+    
+    return args
+```
+
+同时记得修改系统路径：
+
+```python
+import sys
+sys.path.append("/data/cjj/projects/UnifiedPansharpening") # 此处填写你的项目路径
+```
+
+如果出现导包问题，也是因为一些模型文件的这个路径需要修改。
+
 #### Dataset
 
 `Dataset.py`中的`MatWithTextDataset`是加载遥感图像数据集和文本`Caption`数据集的代码。

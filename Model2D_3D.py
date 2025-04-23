@@ -11,8 +11,11 @@ from ModelUtils import *
 import pdb
 
 from PromptIR.Model_AMIR import ProxNet_Prompt
+from PromptIR.PromptIRText import PromptIRText
+from PromptIR.SpatialChannelPrompt import SpatialChannelPrompt
 from codebook.model.model3D.network3D import Network3D
-from AdaIR.AdaIR import AdaIR
+from AdaIR.AdaIR import AdaIR, AdaIRwithPan
+from AdaIR.AdaIR_SpaFre import AdaIRSpaFre
 from channel_Adapt.DynamicChannelAdaptation import DynamicChannelAdaptation
 
 def setup_seeds(seed):
@@ -38,6 +41,9 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
     * WavBest: 
     * AdaIR:AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8],
         ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+    * AdaIR包含SpaFre:self.proxNet = AdaIRSpaFre(inp_channels=8, out_channels=8, dim = 20,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+    * MoreParam:self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 32,num_blocks = [4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+    * 包含Spatial prompt 和 Spectral Prompt 的proxNet:
     """
     def __init__(self, Ch = 8, stages = 4, nc = 32):
         super(DURE2D_3D, self).__init__()
@@ -69,7 +75,8 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
                                 nn.ReLU(),
                                 nn.Conv2d(self.nc, 1, kernel_size=3, stride=1, padding=1))  
         
-        self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        # self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 8,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        self.proxNet = SpatialChannelPrompt(dim=16, num_blocks=[4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         self.proxNetCodeBook = Network3D()
 
@@ -106,7 +113,7 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0.0)  
 
-    def forward(self, M, P, one_hot, text_emb): 
+    def forward(self, M, P, one_hot): 
         """
         input:
         M: LRMS, [B,c,h,w]
@@ -136,10 +143,10 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
             if C == 4:
                 K_middle = K_middle.float().view(B, C, 2, H , W ).mean(dim=2)
             # print("K_middle.shape: ", K_middle.shape)
-            K_middle = K_middle.unsqueeze(1)
+            # K_middle = K_middle.unsqueeze(1)
             K,codebook_loss,_,_ = self.proxNetCodeBook(K_middle, one_hot)
             # print("K.shape: ", K.shape)
-            K = K.squeeze(1)
+            # K = K.squeeze(1)
             if C == 4:
                 K = K.repeat_interleave(2, dim=1)
         
@@ -170,10 +177,11 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
 
         self.DT8 = DynamicChannelAdaptation(in_channels=8,out_channels=8,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = True)
 
-        # self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=24, num_blocks=[2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        # self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[4,6,6,8]).cuda()
+        self.proxNet = PromptIRText(dim=16, num_blocks=[3,5,5,6]).cuda()
 
         
-        self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        # self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         self.proxNetCodeBook = Network3D()
 
@@ -232,7 +240,7 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
             F_middle = Ft - self.alpha_F[i] * Grad_F
 
             # F_middle.shape: [B, C, H, W]
-            Ft = self.proxNet(F_middle)
+            Ft = self.proxNet(F_middle, text_emb)
 
             ## K subproblem
             Grad_K = self.alpha[i] * (K - Ft)
@@ -264,17 +272,18 @@ if __name__ == '__main__':
     # model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
     # for name, module in model.named_modules():
     #     print("name:", name, "module", module)
-    torch.cuda.set_device(3)
-    model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
+    torch.cuda.set_device(1)
+    # model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
+    model = DURE2D_3D(8, 4, 32).cuda()
 
-    input = torch.rand(2, 4 ,32,32).cuda()
-    P = torch.rand(2, 1 , 128, 128).cuda()
-    text = torch.rand(2,384).cuda()
+    input = torch.rand(1, 4 ,32,32).cuda()
+    P = torch.rand(1, 1 , 128, 128).cuda()
+    text = torch.rand(1,384).cuda()
     one_hot = get_one_hot(1, 4)
-    one_hot = one_hot.unsqueeze(0).repeat(2,1)
+    one_hot = one_hot.unsqueeze(0)
     # print(one_hot.shape)
 
-    output = model(input, P, one_hot, text)
+    output = model(input, P, one_hot)
 
     print(output.shape)
 
