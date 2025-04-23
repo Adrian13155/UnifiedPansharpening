@@ -11,7 +11,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 import logging 
 from Model3D import DURE3D
-from Model2D_3D import DURE2D_3D
+from Model2D_3D import DURE2D_3D, DURE2D_3DWithAdaptiveConv
+from Model3Dwith2D import DURE3Dwith2D
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
 # transformData = transformData()
@@ -86,8 +87,11 @@ def main(opt):
                                 MatWithTextDataset(val_wv4_path, val_wv4_text_path)
     list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset]
 
-    model = DURE3D(opt.Ch, opt.Stage, opt.nc).cuda()
+    # model = DURE3Dwith2D(opt.Ch, opt.Stage, opt.nc).cuda()
+    # model = DURE3D(opt.Ch, opt.Stage, opt.nc).cuda()
     # model = DURE2D_3D(opt.Ch, opt.Stage, opt.nc).cuda()
+    model = DURE2D_3DWithAdaptiveConv(opt.Ch, opt.Stage, opt.nc).cuda()
+    
 
     logger = get_logger(os.path.join(save_dir,f'run_{opt.exp_name}.log'))
     logger.info(opt)
@@ -102,9 +106,6 @@ def main(opt):
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, total_iteration, eta_min=1.0e-6)
     L1 = nn.L1Loss().cuda() 
-
-    
-
 
     for epoch in range(opt.epoch_start,num_epoch):
         train_dataset.shuffle()
@@ -186,16 +187,16 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='WavBestFramework', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='TextPromptIRDynamicConv', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
-    parser.add_argument('-batch_size', help='Set the training batch size', default=1, type=int)
+    parser.add_argument('-batch_size', help='Set the training batch size', default=4, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=400, type=int)
     parser.add_argument('-pan_root', help='', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-pan_text_root', help='', default='/data/cjj/dataset/pansharpening/NBU_dataset0730', type=str)
     # parser.add_argument('-checkpoint_path', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment/04-09_19:03_3D framework With No Prompt/epoch=15.pth', type=str)
     parser.add_argument('-save_dir', help='', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='', default=4, type=int)
+    parser.add_argument('-gpu_id', help='', default=6, type=int)
     parser.add_argument('-Ch', help='', default=8, type=int)
     parser.add_argument('-Stage', help='', default=4, type=int)
     parser.add_argument('-nc', help='', default=32, type=int)

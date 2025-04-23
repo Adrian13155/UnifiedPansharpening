@@ -178,7 +178,8 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
         self.DT8 = DynamicChannelAdaptation(in_channels=8,out_channels=8,kernel_size=7,embedding_dim=320,scale = 4,is_transpose = True)
 
         # self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[4,6,6,8]).cuda()
-        self.proxNet = PromptIRText(dim=16, num_blocks=[3,5,5,6]).cuda()
+        # self.proxNet = PromptIRText(dim=16, num_blocks=[3,5,5,6]).cuda()
+        self.proxNet = SpatialChannelPrompt(dim=16, num_blocks=[4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         
         # self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
@@ -218,7 +219,7 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0.0)  
 
-    def forward(self, M, P, one_hot, text_emb): 
+    def forward(self, M, P, one_hot): 
         """
         input:
         M: LRMS, [B,c,h,w]
@@ -240,7 +241,7 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
             F_middle = Ft - self.alpha_F[i] * Grad_F
 
             # F_middle.shape: [B, C, H, W]
-            Ft = self.proxNet(F_middle, text_emb)
+            Ft = self.proxNet(F_middle)
 
             ## K subproblem
             Grad_K = self.alpha[i] * (K - Ft)
@@ -273,13 +274,13 @@ if __name__ == '__main__':
     # for name, module in model.named_modules():
     #     print("name:", name, "module", module)
     torch.cuda.set_device(1)
-    # model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
-    model = DURE2D_3D(8, 4, 32).cuda()
+    model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
+    # model = DURE2D_3D(8, 4, 32).cuda()
 
-    input = torch.rand(1, 4 ,32,32).cuda()
+    input = torch.rand(1, 8 ,32,32).cuda()
     P = torch.rand(1, 1 , 128, 128).cuda()
     text = torch.rand(1,384).cuda()
-    one_hot = get_one_hot(1, 4)
+    one_hot = get_one_hot(2, 4)
     one_hot = one_hot.unsqueeze(0)
     # print(one_hot.shape)
 
