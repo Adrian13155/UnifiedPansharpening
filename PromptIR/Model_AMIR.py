@@ -1,7 +1,8 @@
+import sys
+sys.path.append("/data/cjj/projects/UnifiedPansharpening")
 import torch
 import torch.nn as nn
-# from .Component import *
-from Component import *
+from PromptIR.Component import *
 import torch.nn.functional as F
 import numbers
 from einops import rearrange 
@@ -800,7 +801,8 @@ class ProxNet_Prompt(nn.Module):
 
         super(ProxNet_Prompt, self).__init__()
 
-        self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
+        self.patch_embed4 = OverlapPatchEmbed(4, dim)
+        self.patch_embed8 = OverlapPatchEmbed(8, dim)
         
         
         self.decoder = decoder
@@ -848,12 +850,17 @@ class ProxNet_Prompt(nn.Module):
         
         self.refinement = nn.Sequential(*[TransformerBlock(dim=int(dim*2**1), num_heads=heads[0], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_refinement_blocks)])
                     
-        self.output = nn.Conv2d(int(dim*2**1), out_channels, kernel_size=3, stride=1, padding=1, bias=bias)
+        self.output4 = nn.Conv2d(int(dim*2**1), 4, kernel_size=3, stride=1, padding=1, bias=bias)
+        self.output8 = nn.Conv2d(int(dim*2**1), 8, kernel_size=3, stride=1, padding=1, bias=bias)
 
     def forward(self, inp_img):
-        B, C, H, W = inp_img.shape
+        B,C,H,W = inp_img.shape
+
+        if C == 4:
+            inp_enc_level1 = self.patch_embed4(inp_img)
+        else:
+            inp_enc_level1 = self.patch_embed8(inp_img)
         
-        inp_enc_level1 = self.patch_embed(inp_img)
         out_enc_level1 = self.encoder_level1(inp_enc_level1) # dim
 
 
@@ -897,16 +904,18 @@ class ProxNet_Prompt(nn.Module):
         out_dec_level1 = self.refinement(out_dec_level1) 
 
 
-        out_dec_level1 = self.output(out_dec_level1) + inp_img
-
+        if C == 4:
+            out_dec_level1 = self.output4(out_dec_level1) + inp_img
+        else:
+            out_dec_level1 = self.output8(out_dec_level1) + inp_img
  
         return out_dec_level1
     
 
 if __name__== "__main__":
-    torch.cuda.set_device(1)
+    torch.cuda.set_device(0)
     # model = ProxNet_AMIR_Prompt(inp_channels=9, out_channels=8, dim = 16, num_blocks=[2, 2, 2, 3])
-    model = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[1,1,1,2]).cuda()
+    model = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[4,6,6,8]).cuda()
 
     inp_ms = torch.rand(4, 8, 128, 128).cuda()
 

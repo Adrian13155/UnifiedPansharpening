@@ -3,7 +3,7 @@ sys.path.append("/data/cjj/projects/UnifiedPansharpening")
 from torch import nn
 from codebook.model.model3D.MSAB3D import MSAB3D
 from codebook.model.vq import SharedAndTaskSpecificCodebookVectorQuantizer3D
-from codebook.model.vq3D import BlockBasedResidualVectorQuantizer3D
+from codebook.model.vq3D import BlockBasedResidualVectorQuantizer3D, BlockBasedResidualVectorQuantizer3D_forone
 import torch
 from torch.nn import functional as F
 from codebook.model.feature_converter import TransformerBlock
@@ -61,6 +61,7 @@ class VQModule(nn.Module):
         super().__init__()
         # self.quantize = SharedAndTaskSpecificCodebookVectorQuantizer3D(n_e_shared=n_e_shared, n_e_task=n_e_task, e_dim_shared=e_dim_shared, e_dim_task=e_dim_task, depth=depth, num_tasks=num_tasks)
         self.quantize = BlockBasedResidualVectorQuantizer3D(n_shared=1024, n_task = 256, e_dim=256, beta=0.25, LQ_stage=False, depth=6, unfold_size=2, mlp_codebook=False)
+        # self.quantize = BlockBasedResidualVectorQuantizer3D_forone(n_shared=1536, n_task = 256, e_dim=256, beta=0.25, LQ_stage=False, depth=6, unfold_size=2, mlp_codebook=False)
 
     def forward(self, x, one_hot):
         return self.quantize(x, one_hot)
@@ -325,16 +326,20 @@ class Network3D(nn.Module):
         return f1, f2, f3
     
     def forward(self, x, one_hot):
+        """
+        单独训练codebook的时候需要对维度进行扩张和收缩,训练深度展开框架的时候不需要
+        """
         x = x.unsqueeze(1)
         f1, f2, f3 = self.encode(x)
-        vq_output = self.vq_64(f3, one_hot)
+        with torch.no_grad():
+            vq_output = self.vq_64(f3, one_hot)
 
-        fq, codebook_loss = vq_output
+            fq, codebook_loss = vq_output
 
-        
-        f1_d, fq, f2_d, f3_d = self.decode(fq)
+            
+            f1_d, fq, f2_d, f3_d = self.decode(fq)
 
-        x_rec = self.conv_out(f1_d)
+            x_rec = self.conv_out(f1_d)
         x_rec = x_rec.squeeze(1)
         return x_rec, codebook_loss, [f1, f2, f3], [fq, f2_d, f3_d]
         
