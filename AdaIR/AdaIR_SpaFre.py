@@ -1,9 +1,12 @@
+import sys
+sys.path.append("/data/cjj/projects/UnifiedPansharpening")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pdb import set_trace as stx
 import numbers
 from einops import rearrange
+from AdaIR.SIFTNet import SpaFre
 
 
 ##########################################################################
@@ -367,7 +370,7 @@ class FreModule(nn.Module):
 ##########################################################################
 ##---------- AdaIR -----------------------
 
-class AdaIR(nn.Module):
+class AdaIRSpaFre(nn.Module):
     def __init__(self, 
         inp_channels=4, 
         out_channels=4, 
@@ -381,16 +384,19 @@ class AdaIR(nn.Module):
         decoder = True,
     ):
 
-        super(AdaIR, self).__init__()
+        super(AdaIRSpaFre, self).__init__()
 
         self.patch_embed4 = OverlapPatchEmbed(4, dim)   
-        self.patch_embed8 = OverlapPatchEmbed(8, dim)            
+        self.patch_embed8 = OverlapPatchEmbed(8, dim)
+        self.conv_p1 = nn.Conv2d(1, dim, 3, 1, 1)
+
+        # nn.Conv2d(1, channels, 3, 1, 1)           
         self.decoder = decoder
         
         if self.decoder:
-            self.fre1 = FreModule(dim*2**3, num_heads=heads[2], bias=bias)
-            self.fre2 = FreModule(dim*2**2, num_heads=heads[2], bias=bias)
-            self.fre3 = FreModule(dim*2**1, num_heads=heads[2], bias=bias)            
+            self.fre1 = SpaFre(dim*2**3)
+            self.fre2 = SpaFre(dim*2**2)
+            self.fre3 = SpaFre(dim*2**1)
 
         self.encoder_level1 = nn.Sequential(*[TransformerBlock(dim=dim, num_heads=heads[0], ffn_expansion_factor=ffn_expansion_factor, bias=bias, LayerNorm_type=LayerNorm_type) for i in range(num_blocks[0])])
         
@@ -430,6 +436,8 @@ class AdaIR(nn.Module):
         else:
             inp_enc_level1 = self.patch_embed8(inp_img)
 
+        
+
         out_enc_level1 = self.encoder_level1(inp_enc_level1)
         
         inp_enc_level2 = self.down1_2(out_enc_level1)
@@ -444,7 +452,7 @@ class AdaIR(nn.Module):
         latent = self.latent(inp_enc_level4) 
 
         if self.decoder:
-            latent = self.fre1(inp_img, latent)
+            latent,_ = self.fre1(latent, pan)
       
         inp_dec_level3 = self.up4_3(latent)
 
@@ -454,7 +462,7 @@ class AdaIR(nn.Module):
         out_dec_level3 = self.decoder_level3(inp_dec_level3) 
 
         if self.decoder:
-            out_dec_level3 = self.fre2(inp_img, out_dec_level3)
+            out_dec_level3,_ = self.fre2(out_dec_level3, pan)
 
         inp_dec_level2 = self.up3_2(out_dec_level3)
         inp_dec_level2 = torch.cat([inp_dec_level2, out_enc_level2], 1)
@@ -463,7 +471,7 @@ class AdaIR(nn.Module):
         out_dec_level2 = self.decoder_level2(inp_dec_level2)
 
         if self.decoder:
-            out_dec_level2 = self.fre3(inp_img, out_dec_level2)
+            out_dec_level2,_ = self.fre3(out_dec_level2, pan)
 
         inp_dec_level1 = self.up2_1(out_dec_level2)
         inp_dec_level1 = torch.cat([inp_dec_level1, out_enc_level1], 1)
@@ -482,12 +490,12 @@ class AdaIR(nn.Module):
         return out_dec_level1
     
 if __name__ == '__main__':
-    torch.cuda.set_device(7)
+    torch.cuda.set_device(0)
     lr = torch.randn(1,8,128,128).cuda()
     pan = torch.rand(1,1,128,128).cuda()
-    model = AdaIR(inp_channels=8, 
+    model = AdaIRSpaFre(inp_channels=8, 
         out_channels=8, 
-        dim = 24,
+        dim = 20,
         num_blocks = [2,3,3,4], 
         num_refinement_blocks = 4,
         heads = [1,2,4,8],

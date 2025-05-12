@@ -2,10 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-gf1_wavelength = [485,555,660,830]
-qb_wavelength = [485,560,660,830]
-wv2_wavelength = [425,480,545,605,660,725,832,950]
-wv4_wavelength = [480,545,672,850]
 
 
 class SinusoidalTimeEmbedding(nn.Module): #正余弦位置编码
@@ -25,10 +21,14 @@ class SinusoidalTimeEmbedding(nn.Module): #正余弦位置编码
         return pe
 
 class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的卷积
-    gf1_wavelength = torch.tensor([485,555,660,830], dtype=torch.float64)
-    qb_wavelength = torch.tensor([485,560,660,830], dtype=torch.float64)
-    wv2_wavelength = torch.tensor([425,480,545,605,660,725,832,950], dtype=torch.float64)
-    wv4_wavelength = torch.tensor([480,545,672,850], dtype=torch.float64)
+    # gf1_wavelength = torch.tensor([485,555,660,830], dtype=torch.float64)
+    # qb_wavelength = torch.tensor([485,560,660,830], dtype=torch.float64)
+    # wv2_wavelength = torch.tensor([425,480,545,605,660,725,832,950], dtype=torch.float64)
+    # wv4_wavelength = torch.tensor([480,545,672,850], dtype=torch.float64)
+    gf1_wavelength = torch.tensor([0.15,0.15,0.15,0.15], dtype=torch.float64)
+    qb_wavelength = torch.tensor([0.22,0.25,0.27,0.18], dtype=torch.float64)
+    wv2_wavelength = torch.tensor([0.35,0.32,0.30,0.28,0.25,0.22,0.20,0.18], dtype=torch.float64)
+    wv4_wavelength = torch.tensor([0.30,0.28,0.25,0.20], dtype=torch.float64)
     wavelengths = [gf1_wavelength, qb_wavelength, wv2_wavelength, wv4_wavelength]
     def __init__(self, in_channels, out_channels, scale, kernel_size=3, embedding_dim=64, num_heads=1, dropout=0.1,is_transpose=False):
         super().__init__()
@@ -174,7 +174,7 @@ if __name__=="__main__":
     # L = in_channels #初始化可学习权重的形状L*out_channels；可学习偏置1*out_channels;后续需要zw + e_lambda，因此L = in_channels
     # scale = 1 #下采样率/卷积的stride参数
     
-
+    
     H4 = DynamicChannelAdaptation(
         in_channels=4,
         out_channels=1,
@@ -246,6 +246,7 @@ if __name__=="__main__":
         scale = 4,
         is_transpose = True
     )
+
 
     one_hot = torch.tensor([
         [0, 1, 0, 0],  # 第一个样本属于任务 0

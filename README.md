@@ -65,8 +65,11 @@ sys.path.append("/data/cjj/projects/UnifiedPansharpening") # 此处填写你的�
 * PromptIR，参考论文：[PromptIR: Prompting for All-in-One Blind Image Restoration](https://arxiv.org/abs/2306.13090)
   * 纯正的2DpromptIR:`PromptIR/Model_AMIR.py`中的`ProxNet_Prompt`
   * 3DpromptIR:`PromptIR/PromptIR3D.py`
+  * PromptIRText:`PromptIR/PromptIRText.py`，假如文本的方式参考了论文:[Vision-Language Gradient Descent-driven All-in-One Deep Unfolding Networks](https://arxiv.org/abs/2503.16930)，其中涉及到假如文本的模块:`PromptIR/D_GDM.py`，效果还没有不加的好。
 * WavBest，代码:`WavBEST/WavBEST.py`，是对比方法`TMdiff`中涉及到的U-Net
 * AdaIR，代码:`AdaIR/AdaIR.py`，参考论文：[ADAIR: ADAPTIVE ALL-IN-ONE IMAGE RESTORATION VIA FREQUENCY MINING AND MODULATION](https://arxiv.org/abs/2403.14614)，目前效果很好。
+* MambaIRUNet,代码`Mamba/mambairunet_arch.py`，效果比较一般。
+* SpatialChannelPrompt效果还行，还在调，代码`PromptIR/SpatialChannelPrompt.py`，有两个类，一个原本的SpatialChannelPrompt，另一个加了跳跃连接的SpatialChannelPromptWithJumpConnection。
 
 ### 训练
 

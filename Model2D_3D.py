@@ -8,14 +8,10 @@ from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 from Utils import *
 from ModelUtils import *
-import pdb
+from Mamba.mambairunet_arch import MambaIRUNet
 
-from PromptIR.Model_AMIR import ProxNet_Prompt
-from PromptIR.PromptIRText import PromptIRText
-from PromptIR.SpatialChannelPrompt import SpatialChannelPrompt
+from PromptIR.SpatialChannelPrompt import SpatialChannelPrompt,SpatialChannelPromptWithJumpConnection
 from codebook.model.model3D.network3D import Network3D
-from AdaIR.AdaIR import AdaIR, AdaIRwithPan
-from AdaIR.AdaIR_SpaFre import AdaIRSpaFre
 from channel_Adapt.DynamicChannelAdaptation import DynamicChannelAdaptation
 
 def setup_seeds(seed):
@@ -43,7 +39,8 @@ class DURE2D_3D(nn.Module): ## without alpha, with two thr
         ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
     * AdaIR包含SpaFre:self.proxNet = AdaIRSpaFre(inp_channels=8, out_channels=8, dim = 20,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
     * MoreParam:self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 32,num_blocks = [4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
-    * 包含Spatial prompt 和 Spectral Prompt 的proxNet:
+    * 包含Spatial prompt 和 Spectral Prompt 的proxNet:SpatialChannelPrompt(dim=16, num_blocks=[4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+    * Mamba的Unet:MambaIRUNet(inp_channels=4,out_channels=4,dim=16,num_blocks=[4, 6, 6, 8],num_refinement_blocks=4,mlp_ratio=2.,bias=False,dual_pixel_task=False).cuda()
     """
     def __init__(self, Ch = 8, stages = 4, nc = 32):
         super(DURE2D_3D, self).__init__()
@@ -179,12 +176,15 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
 
         # self.proxNet = ProxNet_Prompt(inp_channels=8, out_channels=8, dim=16, num_blocks=[4,6,6,8]).cuda()
         # self.proxNet = PromptIRText(dim=16, num_blocks=[3,5,5,6]).cuda()
-        self.proxNet = SpatialChannelPrompt(dim=16, num_blocks=[4,6,6,8], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        self.proxNet = SpatialChannelPrompt(dim=24, num_blocks=[2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        # self.proxNet = SpatialChannelPromptWithJumpConnection(dim=24, num_blocks=[2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
+        # self.proxNet = MambaIRUNet(inp_channels=4,out_channels=4,dim=16,num_blocks=[2, 4, 4, 6],num_refinement_blocks=4,mlp_ratio=2.,bias=False,dual_pixel_task=False).cuda()
 
         
         # self.proxNet = AdaIR(inp_channels=8, out_channels=8, dim = 24,num_blocks = [2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         self.proxNetCodeBook = Network3D()
+        # self.proxNetCodeBook = SpatialChannelPrompt(dim=16, num_blocks=[3,4,4,6], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         checkpoint_path = "/data/cjj/projects/UnifiedPansharpening/experiment/03-27_23:14_3D Codebook Stage2 Shared and Task no gard/epoch=126.pth"
         
@@ -230,6 +230,7 @@ class DURE2D_3DWithAdaptiveConv(nn.Module): ## without alpha, with two thr
         Ft = F.interpolate(M , scale_factor = 4, mode = self.upMode)
         B,_,H,W = Ft.shape
         K = Ft.clone()
+        # temp = None
 
         for i in range(0, self.s):
             ## F subproblem  
@@ -273,7 +274,7 @@ if __name__ == '__main__':
     # model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
     # for name, module in model.named_modules():
     #     print("name:", name, "module", module)
-    torch.cuda.set_device(1)
+    torch.cuda.set_device(4)
     model = DURE2D_3DWithAdaptiveConv(8, 4, 32).cuda()
     # model = DURE2D_3D(8, 4, 32).cuda()
 
