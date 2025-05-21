@@ -29,7 +29,9 @@ class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的�
     qb_wavelength = torch.tensor([0.22,0.25,0.27,0.18], dtype=torch.float64)
     wv2_wavelength = torch.tensor([0.35,0.32,0.30,0.28,0.25,0.22,0.20,0.18], dtype=torch.float64)
     wv4_wavelength = torch.tensor([0.30,0.28,0.25,0.20], dtype=torch.float64)
+    # 四数据集用wavelengths = [gf1_wavelength, qb_wavelength, wv2_wavelength, wv4_wavelength]
     wavelengths = [gf1_wavelength, qb_wavelength, wv2_wavelength, wv4_wavelength]
+    # 三数据集用wavelengths = [gf1_wavelength, qb_wavelength, wv4_wavelength]
     def __init__(self, in_channels, out_channels, scale, kernel_size=3, embedding_dim=64, num_heads=1, dropout=0.1,is_transpose=False):
         super().__init__()
         self.in_channels = in_channels
