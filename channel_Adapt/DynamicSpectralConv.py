@@ -76,6 +76,7 @@ class MTFLearner(nn.Module):
 
     def forward(self, mtf):
         # mtf: [C] -> [C, out*K*K]
+        # print("mtf.device", mtf.device)
         kernel = self.mlp(mtf.view(-1, 1))  # [C, out*K*K]
         return kernel.view(-1, self.out_channels, self.kernel_size, self.kernel_size)  # [C, out, K, K]
 
@@ -153,7 +154,7 @@ class DynamicSpectralConv(nn.Module):
         K = self.kernel_size
 
         task_id = one_hot[0].argmax().item()
-        input_wavelengths, mtf_values =  WavelengthsAndMTF.wavelengths[task_id], WavelengthsAndMTF.wtfs[task_id]
+        input_wavelengths, mtf_values =  WavelengthsAndMTF.wavelengths[task_id].cuda(), WavelengthsAndMTF.wtfs[task_id].cuda()
 
         
         # 1. 从大核中选择对应通道 [out, C, K, K]
@@ -243,7 +244,7 @@ class DynamicSpectralTransposeConv(nn.Module):
         K = self.kernel_size
 
         task_id = one_hot[0].argmax().item()
-        input_wavelengths, mtf_values =  WavelengthsAndMTF.wavelengths[task_id], WavelengthsAndMTF.wtfs[task_id]
+        input_wavelengths, mtf_values =  WavelengthsAndMTF.wavelengths[task_id].cuda(), WavelengthsAndMTF.wtfs[task_id].cuda()
 
         # 1. 基础大核 [out, 1, K, K]
         indices = self.get_channel_index(input_wavelengths)  # [C]

@@ -8,6 +8,7 @@ from Utils import *
 from ModelUtils import *
 
 from PromptIR.PromptIR2DWith3D import ProxNet_Prompt2DWith3D
+from PromptIR.SpatialChannelPrompt import SpatialChannelPrompt
 from codebook.model.model3D.network3D import Network3D
 
 
@@ -43,7 +44,8 @@ class DURE3Dwith2D(nn.Module): ## without alpha, with two thr
                                 nn.ReLU(),
                                 nn.ConvTranspose3d(self.nc, 1, kernel_size=3, stride=1, padding=1))
         
-        self.proxNet = ProxNet_Prompt2DWith3D(ce=8, dim=8, num_blocks=[1,1,1,2]).cuda()
+        # self.proxNet = ProxNet_Prompt2DWith3D(ce=8, dim=8, num_blocks=[1,1,1,2]).cuda()
+        self.proxNet = SpatialChannelPrompt(dim=24, num_blocks=[2,3,3,4], num_refinement_blocks = 2,heads = [1,2,4,8], ffn_expansion_factor = 2.66, bias = False, LayerNorm_type = 'WithBias', decoder = True)
 
         self.proxNetCodeBook = Network3D()
 
@@ -80,7 +82,7 @@ class DURE3Dwith2D(nn.Module): ## without alpha, with two thr
                 if m.bias is not None:
                     nn.init.constant_(m.bias.data, 0.0)  
 
-    def forward(self, M, P, one_hot, text_emb): 
+    def forward(self, M, P, one_hot): 
         """
         input:
         M: LRMS, [B,c,h,w]
@@ -101,18 +103,27 @@ class DURE3Dwith2D(nn.Module): ## without alpha, with two thr
             H^T(HF-P) = H^T*H*F - H^T*P = IF - H^TP
             """
             ## F subproblem  
-
+            # print("Ft.shape", Ft.shape)
             Grad_F = self.DT(self.D(Ft) - M) + self.I(Ft) - self.HT(P) + self.alpha[i] *(Ft - K)
+            # print("Grad_F.shape", Grad_F.shape)
             F_middle = Ft - self.alpha_F[i] * Grad_F
 
             # F_middle.shape: [B, 1, C, H, W]
+            F_middle = F_middle.squeeze(1)
+            # print("F_middle.shape", F_middle.shape)
             Ft = self.proxNet(F_middle)
+            Ft = Ft.unsqueeze(1)
+            # print("Ft.shape", Ft.shape)
 
            ## K subproblem
             Grad_K = self.alpha[i] * (K - Ft)
             K_middle = K - self.alpha_K[i] * Grad_K
             # K = self.proxNet(K_middle) 
+            # print("K_middle.shape", K_middle.shape)
+            K_middle = K_middle.squeeze(1)
             K,codebook_loss,_,_ = self.proxNetCodeBook(K_middle, one_hot)
+            K = K.unsqueeze(1)
+            # print("K.shape", K.shape)
         
         return Ft.squeeze(1)
     
@@ -139,17 +150,17 @@ if __name__ == '__main__':
     # model = Network(in_ch=8, n_e=1536, out_ch=8, stage=0, depth=8, unfold_size=2, opt=None, num_block=[1,1,1]).cuda()
     # for name, module in model.named_modules():
     #     print("name:", name, "module", module)
-    # torch.cuda.set_device(6)
+    torch.cuda.set_device(7)
     model = DURE3Dwith2D(8, 4, 32).cuda()
 
-    input = torch.rand(1, 4 ,32,32).cuda()
-    P = torch.rand(1, 1 , 128, 128).cuda()
+    input = torch.rand(4, 8 ,32,32).cuda()
+    P = torch.rand(4, 1 , 128, 128).cuda()
     text = torch.rand(1,384).cuda()
-    one_hot = get_one_hot(1, 4)
-    one_hot = one_hot.unsqueeze(0)#.repeat(4,1)
+    one_hot = get_one_hot(2, 4)
+    one_hot = one_hot.unsqueeze(0).repeat(4,1)
     # print(one_hot.shape)
 
-    output = model(input, P, one_hot, text)
+    output = model(input, P, one_hot)
 
     print(output.shape)
 

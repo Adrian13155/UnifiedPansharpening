@@ -12,8 +12,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR 
 from tqdm import tqdm
 import logging 
-from Model2D_3D import DURE2D_3D, DURE2D_3DWithAdaptiveConv, DURE2D_3DWithDynamicSpectralConv
-from Model3Dwith2D import DURE3Dwith2D
+from Model2D_3D import DURE2D_3D, DURE2D_3DWithAdaptiveConv, DURE2D_3DWithAdaptiveConv_3Datasets
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
 
@@ -54,34 +53,31 @@ def main(opt):
     dataset_folder = opt.pan_root
 
     best_psnr_gf, best_psnr_qb = -float('inf'), -float('inf')
-    best_psnr_wv4, best_psnr_wv2 = -float('inf'), -float('inf')
+    best_psnr_wv4 = -float('inf')
 
     gf_path = os.path.join(dataset_folder,'GF1/train')
     qb_path = os.path.join(dataset_folder,'QB/train')
-    wv2_path = os.path.join(dataset_folder,'WV2/train')
     wv4_path = os.path.join(dataset_folder,'WV4/train')
-    gf_dataset, qb_dataset, wv2_dataset, wv4_dataset = MatDataset(gf_path), MatDataset(qb_path), MatDataset(wv2_path), MatDataset(wv4_path)
-    dataset_labels = {'GF': 0, 'QB': 1, 'WV2': 2, 'WV4': 3}
-    train_dataset = CombineMatDataset(datasets=[gf_dataset, qb_dataset, wv2_dataset, wv4_dataset],
-                            dataset_labels=[dataset_labels['GF'], dataset_labels['QB'], dataset_labels['WV2'], dataset_labels['WV4']])
+    gf_dataset, qb_dataset, wv4_dataset = MatDataset(gf_path), MatDataset(qb_path), MatDataset(wv4_path)
+    dataset_labels = {'GF': 0, 'QB': 1, 'WV4': 2}
+    train_dataset = CombineMatDataset(datasets=[gf_dataset, qb_dataset, wv4_dataset],
+                            dataset_labels=[dataset_labels['GF'], dataset_labels['QB'], dataset_labels['WV4']])
 
 
-    del gf_dataset, qb_dataset, wv2_dataset, wv4_dataset
+    del gf_dataset, qb_dataset, wv4_dataset
 
     # validation
     val_gf_path = os.path.join(dataset_folder,'GF1/test')
     val_qb_path = os.path.join(dataset_folder,'QB/test')
-    val_wv2_path = os.path.join(dataset_folder,'WV2/test')
     val_wv4_path = os.path.join(dataset_folder,'WV4/test')
-    val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset = \
-                                MatDataset(val_gf_path),MatDataset(val_qb_path), MatDataset(val_wv2_path), \
-                                MatDataset(val_wv4_path)
-    list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv2_dataset, val_wv4_dataset]
+    val_gf_dataset, val_qb_dataset, val_wv4_dataset = \
+                                MatDataset(val_gf_path),MatDataset(val_qb_path), MatDataset(val_wv4_path)
+    list_val_dataset = [val_gf_dataset, val_qb_dataset, val_wv4_dataset]
 
-    dataset_namelist = ['GF', 'QB', 'WV2', 'WV4']
+    dataset_namelist = ['GF', 'QB',  'WV4']
     num_datasets = len(dataset_namelist)
 
-    model = DURE2D_3DWithAdaptiveConv(opt.Ch, opt.Stage, opt.nc).cuda()
+    model = DURE2D_3DWithAdaptiveConv_3Datasets(opt.Ch, opt.Stage, opt.nc).cuda()
     
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, num_epoch, eta_min=1e-6)
@@ -165,18 +161,15 @@ def main(opt):
                 if psnr[1] > best_psnr_qb:
                     best_psnr_qb = psnr[1]
                     torch.save(model.state_dict(), os.path.join(save_dir,'Best_qb.pth'))
-                if psnr[2] > best_psnr_wv2: 
-                    best_psnr_wv2 = psnr[2]
-                    torch.save(model.state_dict(), os.path.join(save_dir,'Best_wv2.pth'))
-                if psnr[3] > best_psnr_wv4:
-                    best_psnr_wv4 = psnr[3]
+                if psnr[2] > best_psnr_wv4:
+                    best_psnr_wv4 = psnr[2]
                     torch.save(model.state_dict(), os.path.join(save_dir,'Best_wv4.pth'))
                 ## record
-                logger.info('Epoch:[{}]\t PSNR_GF = {:.4f}\t  PSNR_QB = {:.4f}\t PSNR_WV2 = {:.4f}\t PSNR_WV4 = {:.4f}\t BEST_GF_PSNR = {:.4f}\t BEST_epoch = {}'.format(
-                            epoch, psnr[0], psnr[1], psnr[2], psnr[3], best_psnr_gf, best_index))
+                logger.info('Epoch:[{}]\t PSNR_GF = {:.4f}\t  PSNR_QB = {:.4f}\t PSNR_WV4 = {:.4f}\t BEST_GF_PSNR = {:.4f}\t BEST_epoch = {}'.format(
+                            epoch, psnr[0], psnr[1], psnr[2], best_psnr_gf, best_index))
                 print(
-                    'Epoch:[{}]\t PSNR_GF = {:.4f}\t  PSNR_QB = {:.4f}\t PSNR_WV2 = {:.4f}\t PSNR_WV4 = {:.4f}\t BEST_GF_PSNR = {:.4f}\t BEST_epoch = {}'.format(
-                        epoch, psnr[0], psnr[1], psnr[2], psnr[3], best_psnr_gf, best_index))
+                    'Epoch:[{}]\t PSNR_GF = {:.4f}\t  PSNR_QB = {:.4f}\t PSNR_WV4 = {:.4f}\t BEST_GF_PSNR = {:.4f}\t BEST_epoch = {}'.format(
+                        epoch, psnr[0], psnr[1], psnr[2], best_psnr_gf, best_index))
             
             torch.save({
                 'epoch': epoch,
@@ -188,14 +181,14 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='ResNet[2,3,3,4]Stage3UsingWavelengthsBatch4', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='Stage3_3Datasets_dim32[1,2,2,3]', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
-    parser.add_argument('-batch_size', help='批量大小', default=4, type=int)
+    parser.add_argument('-batch_size', help='批量大小', default=8, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
-    parser.add_argument('-num_epochs', help='', default=300, type=int)
+    parser.add_argument('-num_epochs', help='', default=250, type=int)
     parser.add_argument('-pan_root', help='数据集路径', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='日志保存路径', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='gpu下标', default=4, type=int)
+    parser.add_argument('-gpu_id', help='gpu下标', default=6, type=int)
     parser.add_argument('-Ch', help='', default=8, type=int)
     parser.add_argument('-Stage', help='', default=3, type=int)
     parser.add_argument('-nc', help='', default=32, type=int)

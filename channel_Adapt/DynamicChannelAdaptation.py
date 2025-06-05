@@ -21,14 +21,14 @@ class SinusoidalTimeEmbedding(nn.Module): #正余弦位置编码
         return pe
 
 class DynamicChannelAdaptation(nn.Module):  #通过光谱波长学习动态的卷积
-    # gf1_wavelength = torch.tensor([485,555,660,830], dtype=torch.float64)
-    # qb_wavelength = torch.tensor([485,560,660,830], dtype=torch.float64)
-    # wv2_wavelength = torch.tensor([425,480,545,605,660,725,832,950], dtype=torch.float64)
-    # wv4_wavelength = torch.tensor([480,545,672,850], dtype=torch.float64)
-    gf1_wavelength = torch.tensor([0.15,0.15,0.15,0.15], dtype=torch.float64)
-    qb_wavelength = torch.tensor([0.22,0.25,0.27,0.18], dtype=torch.float64)
-    wv2_wavelength = torch.tensor([0.35,0.32,0.30,0.28,0.25,0.22,0.20,0.18], dtype=torch.float64)
-    wv4_wavelength = torch.tensor([0.30,0.28,0.25,0.20], dtype=torch.float64)
+    gf1_wavelength = torch.tensor([485,555,660,830], dtype=torch.float64)
+    qb_wavelength = torch.tensor([485,560,660,830], dtype=torch.float64)
+    wv2_wavelength = torch.tensor([425,480,545,605,660,725,832,950], dtype=torch.float64)
+    wv4_wavelength = torch.tensor([480,545,672,850], dtype=torch.float64)
+    # gf1_wavelength = torch.tensor([0.15,0.15,0.15,0.15], dtype=torch.float64)
+    # qb_wavelength = torch.tensor([0.22,0.25,0.27,0.18], dtype=torch.float64)
+    # wv2_wavelength = torch.tensor([0.35,0.32,0.30,0.28,0.25,0.22,0.20,0.18], dtype=torch.float64)
+    # wv4_wavelength = torch.tensor([0.30,0.28,0.25,0.20], dtype=torch.float64)
     # 四数据集用wavelengths = [gf1_wavelength, qb_wavelength, wv2_wavelength, wv4_wavelength]
     wavelengths = [gf1_wavelength, qb_wavelength, wv2_wavelength, wv4_wavelength]
     # 三数据集用wavelengths = [gf1_wavelength, qb_wavelength, wv4_wavelength]

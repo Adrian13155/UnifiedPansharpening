@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR 
 from tqdm import tqdm
 import logging 
-from Model2D_3D import DURE2D_3D, DURE2D_3DWithAdaptiveConv, DURE2D_3DWithDynamicSpectralConv
+from Model2D_3D import DURE2D_3D, DURE2D_3DWithAdaptiveConv, DURE2D_3DWithDynamicSpectralConv, DURE2D_3DWithMoEProxNet
 from Model3Dwith2D import DURE3Dwith2D
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
@@ -81,7 +81,7 @@ def main(opt):
     dataset_namelist = ['GF', 'QB', 'WV2', 'WV4']
     num_datasets = len(dataset_namelist)
 
-    model = DURE2D_3DWithAdaptiveConv(opt.Ch, opt.Stage, opt.nc).cuda()
+    model = DURE2D_3DWithMoEProxNet(opt.Ch, opt.Stage, opt.nc).cuda()
     
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, num_epoch, eta_min=1e-6)
@@ -120,10 +120,10 @@ def main(opt):
                 inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                 inp_gt = inp_gt.type(torch.FloatTensor).cuda().permute(0,3,1,2) 
 
-                restored  = model(inp_ms, inp_pan, one_hot)
+                restored, loss  = model(inp_ms, inp_pan, one_hot)
 
                 loss_l1 = L1(restored, inp_gt)
-                loss_G = loss_l1 
+                loss_G = loss_l1 + 0.001 * loss
                 loss_G.backward()
                 optimizer_G.step()
                 torch.cuda.empty_cache() 
@@ -149,7 +149,7 @@ def main(opt):
                         inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                         inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                         inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)
-                        output = model(inp_ms, inp_pan, one_hot)
+                        output, loss = model(inp_ms, inp_pan, one_hot)
 
                         netOutput_np = output.cpu().numpy()[0]
                         gtLabel_np = inp_gt.numpy()[0]
@@ -188,14 +188,14 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='ResNet[2,3,3,4]Stage3UsingWavelengthsBatch4', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='MoEProxNetBatch2', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
-    parser.add_argument('-batch_size', help='批量大小', default=4, type=int)
+    parser.add_argument('-batch_size', help='批量大小', default=2, type=int)
     parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=300, type=int)
     parser.add_argument('-pan_root', help='数据集路径', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='日志保存路径', default='/data/cjj/projects/UnifiedPansharpening/experiment', type=str)
-    parser.add_argument('-gpu_id', help='gpu下标', default=4, type=int)
+    parser.add_argument('-gpu_id', help='gpu下标', default=0, type=int)
     parser.add_argument('-Ch', help='', default=8, type=int)
     parser.add_argument('-Stage', help='', default=3, type=int)
     parser.add_argument('-nc', help='', default=32, type=int)

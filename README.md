@@ -8,6 +8,9 @@
   * 对应的代码在`PromptIR/Model_AMIR.py`中的*ProxNet_Prompt*类
 * Codebook中`codebook/model/model3D`目录下的代码以及`codebook/model/vq3D.py`都是改成3D的代码，可以用来参考，其中`codebook/model/model3D/MSAB3D.py`中涉及到一些注意力的代码改成3D的，会比较麻烦，可以参考借鉴。
 
+> * `train_pansharpeningNoText3Datasets.py`是只训练3个数据集的代码，但是注意如果需要只训练三个数据集还需要调整CodeBook中vq的数据集个数。
+> * `train_pansharpeningMoE.py`是将CodeBook替换成MoE之后看看效果，因为换成MoE之后会有MoE的损失，所以会需要调整一下代码。
+
 #### SpatialPrompt和SpectralPrompt
 
 模型的核心代码在`PromptIR/SpatialChannelPrompt.py`下。
@@ -51,8 +54,9 @@ sys.path.append("/data/cjj/projects/UnifiedPansharpening") # 此处填写你的�
 ### 深度展开框架
 
 * `Model.py`是中的`DURE`是2D深度展开框架的代码。
-
 * `Model2D_3D.py`中的`DURE2D_3D`是既有2D又有3D的框架的代码，除了codebook是3D的，其他的部分全都是2D的。
+  * 代码中ResNet是用来做消融的
+  * MoEProxnet是用来替换CodeBook看看MoE的效果的。
 
 > 因为发现纯3D框架效果比较差，所以看一下把除codebook外的代码都改成2D看看是什么效果/
 

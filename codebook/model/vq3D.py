@@ -81,11 +81,13 @@ class BlockBasedResidualVectorQuantizer3D(ResidualVectorQuantizer):
         self.n_shared = n_shared
         self.n_task = n_task
 
+        num_task = 4
+
         # 共享的/公有的codebook
         self.shared_codebook = nn.Embedding(self.n_shared , e_dim)
         self.shared_codebook.weight.data.uniform_(-1.0 / self.n_shared , 1.0 / self.n_shared)
 
-        self.task_codebooks = nn.ModuleList([nn.Embedding(self.n_task, e_dim) for _ in range(4)])
+        self.task_codebooks = nn.ModuleList([nn.Embedding(self.n_task, e_dim) for _ in range(num_task)])
         for codebook in self.task_codebooks:
             codebook.weight.data.uniform_(-1.0 / self.n_shared, 1.0 / self.n_shared)
 
