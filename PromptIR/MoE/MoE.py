@@ -211,8 +211,39 @@ class MoE(nn.Module):
         threshold_if_out = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_out), 1)
         # is each value currently in the top k.
         normal = Normal(self.mean, self.std)
-        prob_if_in = normal.cdf((clean_values - threshold_if_in)/noise_stddev)
-        prob_if_out = normal.cdf((clean_values - threshold_if_out)/noise_stddev)
+        try:
+            prob_if_in = normal.cdf((clean_values - threshold_if_in)/noise_stddev)
+            prob_if_out = normal.cdf((clean_values - threshold_if_out)/noise_stddev)
+        except Exception as e:
+            print(f"Exception type: {type(e).__name__}")
+            print(f"Exception message: {str(e)}")
+
+            tensors = {
+                "clean_values": clean_values,
+                "noisy_values": noisy_values,
+                "noise_stddev": noise_stddev,
+                "noisy_top_values": noisy_top_values,
+                "threshold_if_in": threshold_if_in,
+                "threshold_if_out": threshold_if_out
+            }
+
+            # 检查每个张量的状态
+            for name, tensor in tensors.items():
+                print("\n" + "-"*40)
+                print(f"Tensor: {name}")
+                print(f"  Shape: {tensor.shape}")
+                print(f"  Device: {tensor.device}")
+                print(f"  Dtype: {tensor.dtype}")
+                print(f"  Has NaN: {torch.isnan(tensor).any().item()}")
+                print(f"  Has Inf: {torch.isinf(tensor).any().item()}")
+                if tensor.numel() > 0:
+                    print(f"  Min: {tensor.min().item()}")
+                    print(f"  Max: {tensor.max().item()}")
+                    print(f"  Mean: {tensor.mean().item()}")
+                    print(f"  Std: {tensor.std().item()}")
+                else:
+                    print("  Empty tensor!")
+
         prob = torch.where(is_in, prob_if_in, prob_if_out)
         return prob
 
