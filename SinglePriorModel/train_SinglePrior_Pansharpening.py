@@ -15,6 +15,7 @@ import logging
 from SinglePriorModel.Model import DURESinglePirorWithMoE
 from skimage.metrics import peak_signal_noise_ratio as PSNR
 from datetime import datetime
+from SinglePriorModel.MultiScaleModel import DURESinglePriorWithTransformerProxNet
 
 def get_one_hot(label, num_classes):
     one_hot = torch.zeros(num_classes)
@@ -84,7 +85,8 @@ def main(opt):
 
     dataset_namelist = ['GF', 'QB', 'WV2', 'WV4']
 
-    model = DURESinglePirorWithMoE(opt.nc).cuda()
+    # model = DURESinglePirorWithMoE(opt.nc).cuda()
+    model = DURESinglePriorWithTransformerProxNet().cuda()
     
     optimizer_G = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08) 
     lr_scheduler_G = CosineAnnealingLR(optimizer_G, num_epoch, eta_min=1e-6)
@@ -101,14 +103,14 @@ def main(opt):
 
     
 
-    if os.path.exists(opt.checkpoint_path):
-        logger.info(f"Loading checkpoint from {opt.checkpoint_path}")
-        checkpoint = torch.load(opt.checkpoint_path, map_location=torch.device('cpu'))
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.to(opt.gpu_id)
-        optimizer_G.load_state_dict(checkpoint['optimizer_state_dict'])
-        lr_scheduler_G.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
+    # if os.path.exists(opt.checkpoint_path):
+    #     logger.info(f"Loading checkpoint from {opt.checkpoint_path}")
+    #     checkpoint = torch.load(opt.checkpoint_path, map_location=torch.device('cpu'))
+    #     model.load_state_dict(checkpoint['model_state_dict'])
+    #     model.to(opt.gpu_id)
+    #     optimizer_G.load_state_dict(checkpoint['optimizer_state_dict'])
+    #     lr_scheduler_G.load_state_dict(checkpoint['scheduler_state_dict'])
+    #     start_epoch = checkpoint['epoch'] + 1
     
     L1 = nn.L1Loss().cuda() 
 
@@ -128,10 +130,11 @@ def main(opt):
                 inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                 inp_gt = inp_gt.type(torch.FloatTensor).cuda().permute(0,3,1,2) 
 
-                restored, loss  = model(inp_ms, inp_pan)
+                # restored, loss  = model(inp_ms, inp_pan)
+                restored = model(inp_ms, inp_pan)
 
                 loss_l1 = L1(restored, inp_gt)
-                loss_G = loss_l1 + 0.001 * loss
+                loss_G = loss_l1 #+ 0.001 * loss
                 loss_G.backward()
                 optimizer_G.step()
                 torch.cuda.empty_cache() 
@@ -155,7 +158,8 @@ def main(opt):
                         inp_ms = inp_ms.type(torch.FloatTensor).cuda().permute(0,3,1,2)
                         inp_pan = inp_pan.type(torch.FloatTensor).cuda().unsqueeze(1)
                         inp_gt = inp_gt.type(torch.FloatTensor).permute(0,3,1,2)
-                        output, loss = model(inp_ms, inp_pan)
+                        # output, loss = model(inp_ms, inp_pan)
+                        output = model(inp_ms, inp_pan)
 
                         netOutput_np = output.cpu().numpy()[0]
                         gtLabel_np = inp_gt.numpy()[0]
@@ -194,17 +198,17 @@ def main(opt):
             
 def get_opt():
     parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-    parser.add_argument('--exp_name', type=str, default='SinglePriorMoEBatch2Dim16[1,2,2,3]', help='experiment name')
+    parser.add_argument('--exp_name', type=str, default='DURESinglePriorWithTransformerProxNetDim24[3,3,4]Batch4', help='experiment name')
     parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
-    parser.add_argument('-batch_size', help='批量大小', default=2, type=int)
-    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=45, type=int)
+    parser.add_argument('-batch_size', help='批量大小', default=4, type=int)
+    parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
     parser.add_argument('-num_epochs', help='', default=300, type=int)
     parser.add_argument('-pan_root', help='数据集路径', default='/data/datasets/pansharpening/NBU_dataset0730', type=str)
     parser.add_argument('-save_dir', help='日志保存路径', default='/data/cjj/projects/UnifiedPansharpening/SinglePriorModel/experiment', type=str)
-    parser.add_argument('-gpu_id', help='gpu下标', default=0, type=int)
+    parser.add_argument('-gpu_id', help='gpu下标', default=3, type=int)
     parser.add_argument('-nc', help='', default=32, type=int)
-    parser.add_argument('-checkpoint_path', type=str, default='/data/cjj/projects/UnifiedPansharpening/SinglePriorModel/experiment/06-25_22:02_SinglePriorMoEBatch2Dim16[1,2,2,3]/epoch=45.pth', help='checkpoint')
-    parser.add_argument('-log_dir', type=str, default='/data/cjj/projects/UnifiedPansharpening/SinglePriorModel/experiment/06-25_22:02_SinglePriorMoEBatch2Dim16[1,2,2,3]', help='原日志路径')
+    # parser.add_argument('-checkpoint_path', type=str, default='/data/cjj/projects/UnifiedPansharpening/SinglePriorModel/experiment/06-25_22:02_SinglePriorMoEBatch2Dim16[1,2,2,3]/epoch=45.pth', help='checkpoint')
+    # parser.add_argument('-log_dir', type=str, default='/data/cjj/projects/UnifiedPansharpening/SinglePriorModel/experiment/06-25_22:02_SinglePriorMoEBatch2Dim16[1,2,2,3]', help='原日志路径')
     
     
     args = parser.parse_args()
